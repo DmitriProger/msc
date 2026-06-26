@@ -14,8 +14,8 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    layout::{Constraint, Direction, Layout, Margin},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
     Terminal,
@@ -88,6 +88,7 @@ fn server_loop(
                 &server,
                 online,
                 &metrics,
+                config.language,
                 error_msg.as_deref(),
             )
         })?;
@@ -124,8 +125,19 @@ fn server_loop(
                             }
                         }
                     }
+                    KeyCode::Enter if !online => {
+                        error_msg = None;
+                        if let Some(ref srv) = server {
+                            let mut state =
+                                AppState::load(&config.state_path()).unwrap_or_default();
+                            match controller.start(srv, &mut state) {
+                                Ok(_) => {}
+                                Err(e) => error_msg = Some(e.to_string()),
+                            }
+                        }
+                    }
                     KeyCode::Char('c') | KeyCode::Char('C') if online => {
-                        let session = format!("msc_{}", server_name);
+                        let session = format!("anvil_{}", server_name);
                         if tmux.session_exists(&session) {
                             disable_raw_mode()?;
                             execute!(
@@ -145,7 +157,14 @@ fn server_loop(
                             )?;
                             terminal.clear()?;
                         } else {
-                            error_msg = Some(format!("tmux session not found for {}", server_name));
+                            error_msg = Some(format!(
+                                "{} {}",
+                                config.language.choose(
+                                    "tmux session not found for",
+                                    "tmux-сессия не найдена для"
+                                ),
+                                server_name
+                            ));
                         }
                     }
                     _ => {}
@@ -161,6 +180,7 @@ fn draw(
     server: &Option<Server>,
     online: bool,
     metrics: &ServerMetrics,
+    language: crate::config::Language,
     error_msg: Option<&str>,
 ) {
     let size = f.area();
@@ -168,7 +188,7 @@ fn draw(
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(6),
             Constraint::Length(8),
             Constraint::Length(4),
             Constraint::Length(2),
@@ -176,22 +196,66 @@ fn draw(
         ])
         .split(size);
 
-    // Header
-    let header_text = Line::from(vec![
-        Span::styled(
-            format!("  🎮 {}", server_name),
-            Style::default().fg(C_ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("                               "),
-        Span::styled(status_text(online), status_style(online)),
-        Span::raw("  "),
-    ]);
-    let header = Paragraph::new(header_text)
-        .block(header_block(""))
-        .style(Style::default().bg(C_BG));
-    f.render_widget(header, chunks[0]);
+    f.render_widget(header_block(language.choose("server", "сервер")), chunks[0]);
+    let header_area = chunks[0].inner(Margin {
+        vertical: 1,
+        horizontal: 2,
+    });
+    let header_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(header_area);
 
-    // Resources panel
+    let path = server
+        .as_ref()
+        .map(|s| s.path.display().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let session = format!("anvil_{}", server_name);
+    let pid = metrics
+        .pid
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    let identity = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(server_name.to_string(), strong_style()),
+            Span::raw("  "),
+            Span::styled(status_text(online, language), status_style(online)),
+        ]),
+        Line::from(vec![
+            Span::styled(language.choose("path    ", "путь    "), label_style()),
+            Span::styled(path, text_style()),
+        ]),
+        Line::from(vec![
+            Span::styled("session ", label_style()),
+            Span::styled(session, text_style()),
+        ]),
+    ]);
+    f.render_widget(identity, header_cols[0]);
+
+    let state = Paragraph::new(vec![
+        Line::from(Span::styled(
+            language.choose("Runtime", "Процесс"),
+            accent_style(),
+        )),
+        Line::from(vec![
+            Span::styled("pid     ", label_style()),
+            Span::styled(pid, text_style()),
+        ]),
+        Line::from(vec![
+            Span::styled(language.choose("uptime  ", "аптайм  "), label_style()),
+            Span::styled(
+                if online && metrics.uptime_secs > 0 {
+                    format_uptime(metrics.uptime_secs)
+                } else {
+                    "-".to_string()
+                },
+                text_style(),
+            ),
+        ]),
+    ]);
+    f.render_widget(state, header_cols[1]);
+
     let max_ram = server
         .as_ref()
         .map(|s| s.config.memory_max_bytes() as f64)
@@ -212,19 +276,11 @@ fn draw(
     let ram_bar = progress_bar(ram_bytes, max_ram, bar_width);
     let cpu_bar = progress_bar(cpu_pct, 100.0, bar_width);
 
-    let uptime_str = if online && metrics.uptime_secs > 0 {
-        format_uptime(metrics.uptime_secs)
-    } else {
-        "—".to_string()
-    };
-
     let resources_text = vec![
-        Line::from(vec![Span::styled("  RAM:  ", dim_style()), Span::raw("")]),
         Line::from(vec![
             Span::styled("  RAM:  ", dim_style()),
             ram_bar.spans[0].clone(),
             ram_bar.spans[1].clone(),
-            ram_bar.spans.get(2).cloned().unwrap_or(Span::raw("")),
             Span::styled(
                 format!(
                     "  {}%   {} / {}",
@@ -239,33 +295,26 @@ fn draw(
             Span::styled("  CPU:  ", dim_style()),
             cpu_bar.spans[0].clone(),
             cpu_bar.spans[1].clone(),
-            cpu_bar.spans.get(2).cloned().unwrap_or(Span::raw("")),
             Span::styled(format!("  {:.0}%", cpu_pct), text_style()),
         ]),
         Line::from(vec![
-            Span::styled("  NET↑  ", dim_style()),
+            Span::styled(language.choose("  NET OUT: ", "  СЕТЬ OUT: "), dim_style()),
             Span::styled(
                 format_bytes_rate(metrics.net_tx_bytes_per_sec),
                 text_style(),
             ),
-            Span::styled("   NET↓  ", dim_style()),
+            Span::styled("   IN: ", dim_style()),
             Span::styled(
                 format_bytes_rate(metrics.net_rx_bytes_per_sec),
                 text_style(),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("  Uptime: ", dim_style()),
-            Span::styled(uptime_str, text_style()),
-        ]),
     ];
 
-    let resources = Paragraph::new(resources_text)
-        .block(panel_block("Ресурсы"))
-        .style(Style::default().bg(C_SURFACE));
+    let resources =
+        Paragraph::new(resources_text).block(panel_block(language.choose("Resources", "Ресурсы")));
     f.render_widget(resources, chunks[1]);
 
-    // Actions panel
     let (r_style, s_style, c_style) = if online {
         (accent_style(), accent_style(), accent_style())
     } else {
@@ -273,36 +322,52 @@ fn draw(
     };
 
     let actions_text = vec![Line::from(vec![
-        Span::styled("  [R] Restart    ", r_style),
-        Span::styled("[S] Stop    ", s_style),
-        Span::styled("[C] Console", c_style),
+        Span::styled(
+            language.choose("  [R] Restart   ", "  [R] Рестарт   "),
+            r_style,
+        ),
+        Span::styled(language.choose("[S] Stop   ", "[S] Стоп   "), s_style),
+        Span::styled(language.choose("[C] Console", "[C] Консоль"), c_style),
         if !online {
-            Span::styled("    [Enter] Start", accent_style())
+            Span::styled(
+                language.choose("   [Enter] Start", "   [Enter] Старт"),
+                accent_style(),
+            )
         } else {
             Span::raw("")
         },
     ])];
 
-    let actions = Paragraph::new(actions_text)
-        .block(panel_block("Действия"))
-        .style(Style::default().bg(C_SURFACE));
+    let actions =
+        Paragraph::new(actions_text).block(panel_block(language.choose("Actions", "Действия")));
     f.render_widget(actions, chunks[2]);
 
-    // Footer
     let footer_lines = if let Some(err) = error_msg {
         vec![
             Line::from(Span::styled(
-                format!("  ✗ {}", err),
+                format!("  error: {}", err),
                 Style::default().fg(C_ERROR),
             )),
-            Line::from(Span::styled(" [Backspace] назад   [Q] выход", dim_style())),
+            Line::from(Span::styled(
+                language.choose(
+                    " [Backspace] Back   [Q] Quit",
+                    " [Backspace] Назад   [Q] Выход",
+                ),
+                dim_style(),
+            )),
         ]
     } else {
         vec![
             Line::from(""),
-            Line::from(Span::styled(" [Backspace] назад   [Q] выход", dim_style())),
+            Line::from(Span::styled(
+                language.choose(
+                    " [Backspace] Back   [Q] Quit",
+                    " [Backspace] Назад   [Q] Выход",
+                ),
+                dim_style(),
+            )),
         ]
     };
-    let footer = Paragraph::new(footer_lines).style(Style::default().bg(C_BG));
+    let footer = Paragraph::new(footer_lines);
     f.render_widget(footer, chunks[3]);
 }

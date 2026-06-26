@@ -1,4 +1,4 @@
-use msc::state::{AppState, DesiredState};
+use anvil::state::{AppState, DesiredState};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -19,7 +19,10 @@ fn test_state_atomic_write_and_read() {
 fn test_corrupt_state_returns_empty() {
     let corrupt = Path::new("tests/fixtures/corrupt_state.json");
     let state = AppState::load(corrupt).unwrap();
-    assert!(state.servers.is_empty(), "Corrupt state should yield empty servers");
+    assert!(
+        state.servers.is_empty(),
+        "Corrupt state should yield empty servers"
+    );
 }
 
 #[test]

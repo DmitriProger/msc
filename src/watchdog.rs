@@ -26,7 +26,7 @@ impl ServerWatchState {
 }
 
 pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
-    acquire_lock(&config)?;
+    let _lock = acquire_lock(&config)?;
     tracing::info!("Watchdog started");
 
     let tmux = TmuxClient::new(&config.tmux_socket);
@@ -74,7 +74,7 @@ pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
                 .or_insert_with(ServerWatchState::new);
 
             if controller.is_online(server) {
-                // Server is running — update uptime tracker, maybe reset counter
+                // Server is running; update uptime tracker and maybe reset counter.
                 if watch.start_time.is_none() {
                     watch.start_time = Some(Instant::now());
                 }
@@ -90,6 +90,11 @@ pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
 
             // Server is down
             watch.start_time = None;
+
+            if !server.config.server.auto_restart {
+                tracing::debug!(server = %server.name, "auto_restart is disabled, skipping restart");
+                continue;
+            }
 
             if watch.gave_up {
                 tracing::debug!(server = %server.name, "Watchdog gave up on this server, skipping");

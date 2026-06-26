@@ -1,4 +1,4 @@
-use crate::error::{MscError, Result};
+use crate::error::{AnvilError, Result};
 use std::process::Command;
 
 pub struct TmuxClient {
@@ -20,7 +20,7 @@ impl TmuxClient {
         let result = Command::new("tmux").arg("-V").output();
         match result {
             Ok(output) if output.status.success() => Ok(()),
-            _ => Err(MscError::TmuxNotInstalled),
+            _ => Err(AnvilError::TmuxNotInstalled),
         }
     }
 
@@ -34,16 +34,16 @@ impl TmuxClient {
         }
         let output = cmd.output().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                MscError::TmuxNotInstalled
+                AnvilError::TmuxNotInstalled
             } else {
-                MscError::TmuxCommandFailed(e.to_string())
+                AnvilError::TmuxCommandFailed(e.to_string())
             }
         })?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(MscError::TmuxCommandFailed(stderr))
+            Err(AnvilError::TmuxCommandFailed(stderr))
         }
     }
 
@@ -79,7 +79,7 @@ impl TmuxClient {
     pub fn kill_session(&self, session: &str) -> Result<()> {
         match self.run(&["kill-session", "-t", session]) {
             Ok(_) => Ok(()),
-            Err(MscError::TmuxCommandFailed(e)) if e.contains("can't find session") => Ok(()),
+            Err(AnvilError::TmuxCommandFailed(e)) if e.contains("can't find session") => Ok(()),
             Err(e) => Err(e),
         }
     }
@@ -92,7 +92,7 @@ impl TmuxClient {
     pub fn pane_pid(&self, session: &str) -> Result<u32> {
         let pid_str = self.run(&["display-message", "-p", "-t", session, "#{pane_pid}"])?;
         pid_str.trim().parse::<u32>().map_err(|_| {
-            MscError::TmuxCommandFailed(format!("Invalid PID from tmux: '{}'", pid_str))
+            AnvilError::TmuxCommandFailed(format!("Invalid PID from tmux: '{}'", pid_str))
         })
     }
 
@@ -110,9 +110,9 @@ impl TmuxClient {
             .status()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    MscError::TmuxNotInstalled
+                    AnvilError::TmuxNotInstalled
                 } else {
-                    MscError::TmuxCommandFailed(e.to_string())
+                    AnvilError::TmuxCommandFailed(e.to_string())
                 }
             })?;
         Ok(status)
@@ -128,21 +128,35 @@ impl TmuxClient {
 }
 
 pub fn has_child_processes(pane_pid: u32) -> bool {
-    let children_path = format!("/proc/{}/task/{}/children", pane_pid, pane_pid);
-    match std::fs::read_to_string(&children_path) {
-        Ok(content) => !content.trim().is_empty(),
-        Err(_) => {
-            // fallback: check /proc/<pid>/status
-            std::path::Path::new(&format!("/proc/{}", pane_pid)).exists()
-        }
-    }
+    !descendant_pids(pane_pid).is_empty()
 }
 
 pub fn get_child_pid(pane_pid: u32) -> Option<u32> {
-    let children_path = format!("/proc/{}/task/{}/children", pane_pid, pane_pid);
-    if let Ok(content) = std::fs::read_to_string(&children_path) {
-        let first = content.split_whitespace().next()?;
-        return first.parse::<u32>().ok();
+    descendant_pids(pane_pid).last().copied()
+}
+
+fn descendant_pids(pid: u32) -> Vec<u32> {
+    let mut descendants = Vec::new();
+    collect_descendants(pid, &mut descendants);
+    descendants
+}
+
+fn collect_descendants(pid: u32, descendants: &mut Vec<u32>) {
+    for child in direct_child_pids(pid) {
+        descendants.push(child);
+        collect_descendants(child, descendants);
     }
-    None
+}
+
+fn direct_child_pids(pid: u32) -> Vec<u32> {
+    let children_path = format!("/proc/{}/task/{}/children", pid, pid);
+    std::fs::read_to_string(&children_path)
+        .ok()
+        .map(|content| {
+            content
+                .split_whitespace()
+                .filter_map(|pid| pid.parse::<u32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }

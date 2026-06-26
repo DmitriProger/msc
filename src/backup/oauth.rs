@@ -176,7 +176,7 @@ impl OAuthClient {
     pub async fn get_valid_token(&self) -> Result<String> {
         match self.load_token() {
             Ok(token) => Ok(token.access_token),
-            Err(_) => anyhow::bail!("Not authorized. Run `msc backup auth` first"),
+            Err(_) => anyhow::bail!("Not authorized. Run `anvil backup auth` first"),
         }
     }
 }

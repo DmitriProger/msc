@@ -6,17 +6,18 @@ mod server;
 mod state;
 mod tmux;
 mod tui;
+mod update;
 mod watchdog;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use config::GlobalConfig;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "msc",
-    about = "Minecraft Server Control — professional CLI for managing Minecraft servers on Linux",
+    name = "anvil",
+    about = "Anvil - CLI for managing Minecraft servers on Linux",
     version = config::VERSION,
     disable_help_subcommand = true,
 )]
@@ -43,6 +44,9 @@ enum Command {
     /// Show version
     Version,
 
+    /// Update anvil from a GitHub release
+    Update(UpdateArgs),
+
     /// Backup management
     Backup {
         #[command(subcommand)]
@@ -52,6 +56,25 @@ enum Command {
     /// Server-specific commands
     #[command(external_subcommand)]
     Server(Vec<String>),
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Only check if an update is available
+    #[arg(long)]
+    check: bool,
+
+    /// Install even when the latest release matches the current version
+    #[arg(long)]
+    force: bool,
+
+    /// Override update repository in owner/name format
+    #[arg(long)]
+    repo: Option<String>,
+
+    /// Install a specific release tag, for example v1.1.0
+    #[arg(long)]
+    version: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -65,9 +88,9 @@ enum BackupCommand {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let global_config = GlobalConfig::load().unwrap_or_default();
+    let global_config = GlobalConfig::load()?;
 
-    init_tracing(&global_config);
+    init_tracing(&global_config, cli.watchdog);
 
     if cli.watchdog {
         watchdog::run_watchdog(global_config)?;
@@ -95,6 +118,15 @@ fn main() -> Result<()> {
             let printer = cli::Printer::new();
             cli::cmd_version(&printer);
         }
+        Some(Command::Update(args)) => {
+            cli::cmd_update(
+                &global_config,
+                args.repo,
+                args.version,
+                args.check,
+                args.force,
+            )?;
+        }
         Some(Command::Backup { action }) => {
             handle_backup(action, &global_config)?;
         }
@@ -108,7 +140,7 @@ fn main() -> Result<()> {
 
 fn handle_server_args(args: Vec<String>, global_config: &GlobalConfig) -> Result<()> {
     if args.is_empty() {
-        eprintln!("Usage: msc <name> [start|stop|restart|console|status|send <cmd>|backup]");
+        eprintln!("Usage: anvil <name> [start|stop|restart|console|status|send <cmd>|backup]");
         std::process::exit(1);
     }
 
@@ -153,7 +185,7 @@ fn handle_server_args(args: Vec<String>, global_config: &GlobalConfig) -> Result
             check_server_exists(&servers, name);
             let cmd = args.get(2).map(|s| s.as_str()).unwrap_or("");
             if cmd.is_empty() {
-                eprintln!("Usage: msc {} send \"<command>\"", name);
+                eprintln!("Usage: anvil {} send \"<command>\"", name);
                 std::process::exit(1);
             }
             let _ = cli::cmd_send(name, cmd, global_config).map_err(|_| std::process::exit(1));
@@ -171,7 +203,7 @@ fn handle_server_args(args: Vec<String>, global_config: &GlobalConfig) -> Result
         Some(unknown) => {
             eprintln!("Unknown subcommand: {}", unknown);
             eprintln!(
-                "Usage: msc {} [start|stop|restart|console|status|send|backup]",
+                "Usage: anvil {} [start|stop|restart|console|status|send|backup]",
                 name
             );
             std::process::exit(1);
@@ -205,15 +237,15 @@ fn handle_backup(action: BackupCommand, config: &GlobalConfig) -> Result<()> {
             );
             printer.block_start("Google Drive Auth");
             printer.block_blank();
-            printer.block_line("  →  Opening authorization flow...");
+            printer.block_line("Opening authorization flow...");
             printer.block_blank();
             rt.block_on(oauth.authorize())?;
             printer.block_blank();
-            printer.block_line("  ✓  Authorized successfully");
-            printer.block_line(&format!("  ✓  Token saved to {}", config.backup.token_path));
+            printer.block_line("Authorized successfully");
+            printer.block_line(&format!("Token saved to {}", config.backup.token_path));
             printer.block_blank();
-            printer.block_line("  ·  Token will refresh automatically");
-            printer.block_line("  ·  Run `msc backup status` to verify connection");
+            printer.block_line("Token will refresh automatically");
+            printer.block_line("Run `anvil backup status` to verify connection");
             printer.block_blank();
             printer.block_end();
         }
@@ -227,7 +259,7 @@ fn handle_backup(action: BackupCommand, config: &GlobalConfig) -> Result<()> {
                 printer.success("Authorized with Google Drive");
                 printer.dim(&format!("Token: {}", config.backup.token_path));
             } else {
-                printer.error("Not authorized. Run `msc backup auth`");
+                printer.error("Not authorized. Run `anvil backup auth`");
             }
         }
     }
@@ -244,16 +276,16 @@ fn handle_server_backup(
     match sub {
         None => {
             printer.info(&format!("Starting backup for {}...", name));
-            printer.warn("Backup requires Google Drive auth. Run `msc backup auth` first.");
+            printer.warn("Backup requires Google Drive auth. Run `anvil backup auth` first.");
         }
         Some("list") => {
             printer.info(&format!("Fetching backup list for {}...", name));
-            printer.warn("Configure Google Drive first: `msc backup auth`");
+            printer.warn("Configure Google Drive first: `anvil backup auth`");
         }
         Some("restore") => {
             let filename = arg.unwrap_or("");
             if filename.is_empty() {
-                printer.error("Usage: msc <name> backup restore <filename>");
+                printer.error("Usage: anvil <name> backup restore <filename>");
                 std::process::exit(1);
             }
             printer.warn(&format!(
@@ -261,7 +293,7 @@ fn handle_server_backup(
                 name
             ));
             printer.warn("Server will be stopped during restore");
-            print!("\n  →  Proceed? [y/N] ");
+            print!("\nProceed? [y/N] ");
             use std::io::Write;
             std::io::stdout().flush().ok();
             let mut input = String::new();
@@ -280,8 +312,12 @@ fn handle_server_backup(
     Ok(())
 }
 
-fn init_tracing(config: &GlobalConfig) {
-    let filter = EnvFilter::try_from_env("MSC_LOG")
+fn init_tracing(config: &GlobalConfig, watchdog: bool) {
+    if !watchdog && std::env::var_os("ANVIL_LOG").is_none() {
+        return;
+    }
+
+    let filter = EnvFilter::try_from_env("ANVIL_LOG")
         .or_else(|_| EnvFilter::try_new(&config.log_level))
         .unwrap_or_else(|_| EnvFilter::new("info"));
 

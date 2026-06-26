@@ -14,7 +14,6 @@ pub struct ServerMetrics {
 pub struct MetricsCollector {
     prev_cpu_times: Option<(u64, u64, Instant)>,
     prev_net: Option<(u64, u64, Instant)>,
-    start_time: Option<Instant>,
 }
 
 impl MetricsCollector {
@@ -22,20 +21,14 @@ impl MetricsCollector {
         Self {
             prev_cpu_times: None,
             prev_net: None,
-            start_time: None,
         }
     }
 
     pub fn collect(&mut self, pid: u32) -> Result<ServerMetrics> {
-        if self.start_time.is_none() {
-            self.start_time = Some(Instant::now());
-        }
-
         let ram_bytes = read_vmrss(pid)?;
         let cpu_percent = self.read_cpu_percent(pid)?;
         let (net_rx, net_tx) = self.read_net_rates()?;
-
-        let uptime_secs = self.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+        let uptime_secs = get_process_uptime_secs(pid).unwrap_or(0);
 
         Ok(ServerMetrics {
             pid: Some(pid),
@@ -89,6 +82,12 @@ impl MetricsCollector {
     }
 }
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn read_vmrss(pid: u32) -> Result<u64> {
     let path = format!("/proc/{}/status", pid);
     let content =
@@ -107,15 +106,12 @@ pub fn read_vmrss(pid: u32) -> Result<u64> {
 }
 
 pub fn read_cpu_ticks(pid: u32) -> Result<(u64, u64)> {
-    let path = format!("/proc/{}/stat", pid);
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path))?;
-    let fields: Vec<&str> = content.split_whitespace().collect();
-    if fields.len() < 15 {
+    let fields = read_proc_stat_fields_after_comm(pid)?;
+    if fields.len() <= 12 {
         return Ok((0, 0));
     }
-    let utime: u64 = fields[13].parse().unwrap_or(0);
-    let stime: u64 = fields[14].parse().unwrap_or(0);
+    let utime: u64 = fields[11].parse().unwrap_or(0);
+    let stime: u64 = fields[12].parse().unwrap_or(0);
     Ok((utime, stime))
 }
 
@@ -198,13 +194,24 @@ pub fn format_bytes_rate(bytes_per_sec: u64) -> String {
 }
 
 pub fn get_process_start_time(pid: u32) -> Option<u64> {
-    let path = format!("/proc/{}/stat", pid);
-    let content = std::fs::read_to_string(&path).ok()?;
-    let fields: Vec<&str> = content.split_whitespace().collect();
-    if fields.len() < 22 {
+    let fields = read_proc_stat_fields_after_comm(pid).ok()?;
+    if fields.len() <= 19 {
         return None;
     }
-    fields[21].parse::<u64>().ok()
+    fields[19].parse::<u64>().ok()
+}
+
+fn read_proc_stat_fields_after_comm(pid: u32) -> Result<Vec<String>> {
+    let path = format!("/proc/{}/stat", pid);
+    let content =
+        std::fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path))?;
+    let end = content
+        .rfind(") ")
+        .context("Malformed /proc stat: missing process name terminator")?;
+    Ok(content[end + 2..]
+        .split_whitespace()
+        .map(|field| field.to_string())
+        .collect())
 }
 
 pub fn get_system_uptime_secs() -> f64 {

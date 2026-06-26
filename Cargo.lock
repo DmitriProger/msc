@@ -94,6 +94,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "anvil"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "atty",
+ "chrono",
+ "clap",
+ "cron",
+ "crossterm",
+ "glob",
+ "inotify",
+ "mockall",
+ "nix",
+ "oauth2",
+ "predicates",
+ "ratatui",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-cron-scheduler",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1457,38 +1489,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "msc"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "atty",
- "chrono",
- "clap",
- "cron",
- "crossterm",
- "glob",
- "inotify",
- "mockall",
- "nix",
- "oauth2",
- "predicates",
- "ratatui",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-cron-scheduler",
- "toml",
- "tracing",
- "tracing-subscriber",
- "zip",
 ]
 
 [[package]]

@@ -1,13 +1,13 @@
-use msc::config::GlobalConfig;
-use msc::server::{discover_servers, validate_server_name};
+use anvil::config::GlobalConfig;
+use anvil::server::{discover_servers, validate_server_name};
 use tempfile::tempdir;
 
 fn make_config(root: &str) -> GlobalConfig {
     GlobalConfig {
         servers_root: root.to_string(),
         log_level: "info".to_string(),
-        tmux_socket: "msc_test".to_string(),
-        backup: Default::default(),
+        tmux_socket: "anvil_test".to_string(),
+        ..Default::default()
     }
 }
 

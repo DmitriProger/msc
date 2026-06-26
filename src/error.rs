@@ -2,7 +2,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum MscError {
+pub enum AnvilError {
     #[error("Server '{0}' not found")]
     ServerNotFound(String),
 
@@ -61,4 +61,4 @@ pub enum MscError {
     OAuth(String),
 }
 
-pub type Result<T> = std::result::Result<T, MscError>;
+pub type Result<T> = std::result::Result<T, AnvilError>;

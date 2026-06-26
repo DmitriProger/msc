@@ -1,6 +1,6 @@
 use super::{check_start_script_executable, Server};
 use crate::config::GlobalConfig;
-use crate::error::{MscError, Result};
+use crate::error::{AnvilError, Result};
 use crate::state::{AppState, DesiredState};
 use crate::tmux::{get_child_pid, has_child_processes, TmuxClient};
 use std::time::{Duration, Instant};
@@ -16,7 +16,7 @@ impl<'a> ServerController<'a> {
     }
 
     pub fn session_name(server: &Server) -> String {
-        format!("msc_{}", server.name)
+        format!("anvil_{}", server.name)
     }
 
     pub fn is_online(&self, server: &Server) -> bool {
@@ -36,7 +36,7 @@ impl<'a> ServerController<'a> {
             return None;
         }
         let pane_pid = self.tmux.pane_pid(&session).ok()?;
-        get_child_pid(pane_pid).or(Some(pane_pid))
+        get_child_pid(pane_pid)
     }
 
     pub fn start(&self, server: &Server, state: &mut AppState) -> Result<u32> {
@@ -44,9 +44,9 @@ impl<'a> ServerController<'a> {
 
         if self.tmux.session_exists(&session) {
             if self.is_online(server) {
-                return Err(MscError::ServerAlreadyRunning(server.name.clone()));
+                return Err(AnvilError::ServerAlreadyRunning(server.name.clone()));
             }
-            // session exists but process died — kill stale session
+            // Session exists but process died; kill stale session.
             if let Err(e) = self.tmux.kill_session(&session) {
                 tracing::warn!(server = %server.name, error = %e, "Failed to kill stale tmux session");
             }
@@ -89,7 +89,7 @@ impl<'a> ServerController<'a> {
             if let Err(e) = state.save(&state_path) {
                 tracing::warn!(error = %e, "Failed to save state");
             }
-            return Err(MscError::ServerNotRunning(server.name.clone()));
+            return Err(AnvilError::ServerNotRunning(server.name.clone()));
         }
 
         tracing::info!(server = %server.name, "Sending stop command");

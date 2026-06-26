@@ -12,10 +12,10 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    layout::{Constraint, Direction, Layout, Margin},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Cell, Paragraph, Row, Table},
     Terminal,
 };
 use std::io;
@@ -64,7 +64,11 @@ fn main_loop(
             last_refresh = Instant::now();
         }
 
-        terminal.draw(|f| draw(f, &entries, selected))?;
+        if !entries.is_empty() && selected >= entries.len() {
+            selected = entries.len() - 1;
+        }
+
+        terminal.draw(|f| draw(f, config, &entries, selected))?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -125,7 +129,11 @@ fn collect_entries(config: &GlobalConfig) -> Vec<ServerEntry> {
         .into_iter()
         .map(|server| {
             let online = controller.is_online(&server);
-            let pid = controller.get_server_pid(&server);
+            let pid = if online {
+                controller.get_server_pid(&server)
+            } else {
+                None
+            };
             let ram_bytes = pid.and_then(|p| read_vmrss(p).ok()).unwrap_or(0);
             ServerEntry {
                 server,
@@ -145,58 +153,155 @@ fn collect_entries(config: &GlobalConfig) -> Vec<ServerEntry> {
     entries
 }
 
-fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
+fn draw(f: &mut ratatui::Frame, config: &GlobalConfig, entries: &[ServerEntry], selected: usize) {
     let size = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(8),
+            Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(2),
         ])
         .split(size);
 
-    // Header
-    let header_text = Line::from(vec![
-        Span::styled(
-            "  🎮  MSC — Minecraft Server Control",
-            Style::default().fg(C_ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("          v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(C_TEXT_DIM),
-        ),
-        Span::raw("  "),
-    ]);
-    let header = Paragraph::new(header_text)
-        .block(header_block(""))
-        .style(Style::default().bg(C_BG));
-    f.render_widget(header, chunks[0]);
+    let total = entries.len();
+    let online = entries.iter().filter(|entry| entry.online).count();
+    let offline = total.saturating_sub(online);
 
-    // Server list
+    f.render_widget(header_block("Anvil"), chunks[0]);
+    let summary_area = chunks[0].inner(Margin {
+        vertical: 1,
+        horizontal: 2,
+    });
+    let summary_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(summary_area);
+
+    let overview = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Anvil", strong_style()),
+            Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), dim_style()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                config.language.choose("root    ", "корень  "),
+                label_style(),
+            ),
+            Span::styled(config.servers_root.as_str(), text_style()),
+        ]),
+        Line::from(vec![
+            Span::styled("socket  ", label_style()),
+            Span::styled(config.tmux_socket.as_str(), text_style()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                config.language.choose("servers ", "серверы "),
+                label_style(),
+            ),
+            Span::styled(
+                format!("{} {}", total, config.language.choose("total", "всего")),
+                text_style(),
+            ),
+            Span::styled("  ", dim_style()),
+            Span::styled(
+                format!("{} {}", online, config.language.choose("up", "вкл")),
+                accent_style(),
+            ),
+            Span::styled("  ", dim_style()),
+            Span::styled(
+                format!("{} {}", offline, config.language.choose("down", "выкл")),
+                dim_style(),
+            ),
+        ]),
+    ]);
+    f.render_widget(overview, summary_cols[0]);
+
+    let tips = Paragraph::new(vec![
+        Line::from(Span::styled(
+            config.language.choose("Commands", "Команды"),
+            accent_style(),
+        )),
+        Line::from(vec![
+            Span::styled("enter", strong_style()),
+            Span::styled(
+                config
+                    .language
+                    .choose(" open selected server", " открыть сервер"),
+                dim_style(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("j/k", strong_style()),
+            Span::styled(config.language.choose(" or ", " или "), dim_style()),
+            Span::styled("up/down", strong_style()),
+            Span::styled(
+                config
+                    .language
+                    .choose(" move selection", " переместить выбор"),
+                dim_style(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("q", strong_style()),
+            Span::styled(config.language.choose(" quit", " выход"), dim_style()),
+        ]),
+    ]);
+    f.render_widget(tips, summary_cols[1]);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            config.language.choose("servers", "серверы"),
+            accent_dim_style(),
+        )])),
+        chunks[1],
+    );
+
     if entries.is_empty() {
         let no_servers = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  No servers found",
-                Style::default().fg(C_TEXT_DIM),
+                config
+                    .language
+                    .choose("No servers found", "Серверы не найдены"),
+                Style::default().fg(C_TEXT_STRONG),
             )),
-            Line::from(""),
             Line::from(Span::styled(
-                "  Create a directory in /opt/minecraft with a start.sh file",
+                format!(
+                    "{} {} {}",
+                    config
+                        .language
+                        .choose("Create a directory in", "Создай директорию в"),
+                    config.servers_root,
+                    config
+                        .language
+                        .choose("with a start.sh file", "с файлом start.sh")
+                ),
                 Style::default().fg(C_TEXT_DARK),
             )),
         ])
-        .block(Block::default().borders(Borders::NONE))
-        .style(Style::default().bg(C_BG));
-        f.render_widget(no_servers, chunks[1]);
+        .block(panel_block(config.language.choose("Servers", "Серверы")));
+        f.render_widget(no_servers, chunks[2]);
     } else {
         let header_row = Row::new(vec![
-            Cell::from(Span::styled("  Серверы", Style::default().fg(C_TEXT_DIM))),
-            Cell::from(Span::styled("Статус", Style::default().fg(C_TEXT_DIM))),
-            Cell::from(Span::styled("RAM", Style::default().fg(C_TEXT_DIM))),
-            Cell::from(Span::styled("Uptime", Style::default().fg(C_TEXT_DIM))),
+            Cell::from(Span::styled(
+                config.language.choose("  Server", "  Сервер"),
+                Style::default().fg(C_TEXT_DIM),
+            )),
+            Cell::from(Span::styled(
+                config.language.choose("Status", "Статус"),
+                Style::default().fg(C_TEXT_DIM),
+            )),
+            Cell::from(Span::styled(
+                config.language.choose("RAM", "Память"),
+                Style::default().fg(C_TEXT_DIM),
+            )),
+            Cell::from(Span::styled(
+                config.language.choose("Uptime", "Аптайм"),
+                Style::default().fg(C_TEXT_DIM),
+            )),
         ]);
 
         let rows: Vec<Row> = entries
@@ -204,7 +309,7 @@ fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
             .enumerate()
             .map(|(i, entry)| {
                 let is_selected = i == selected;
-                let prefix = if is_selected { "▶ " } else { "  " };
+                let prefix = if is_selected { "> " } else { "  " };
                 let name_cell = if is_selected {
                     Cell::from(Span::styled(
                         format!("{}{}", prefix, entry.server.name),
@@ -218,7 +323,7 @@ fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
                 };
 
                 let status_cell = Cell::from(Span::styled(
-                    status_text(entry.online),
+                    status_text(entry.online, config.language),
                     status_style(entry.online),
                 ));
 
@@ -229,7 +334,7 @@ fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
                         entry.server.config.limits.memory_max
                     )
                 } else {
-                    "—".to_string()
+                    "-".to_string()
                 };
 
                 let uptime_str = if entry.online {
@@ -237,9 +342,9 @@ fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
                         .pid
                         .and_then(get_process_uptime_secs)
                         .map(crate::server::metrics::format_uptime)
-                        .unwrap_or_else(|| "—".to_string())
+                        .unwrap_or_else(|| "-".to_string())
                 } else {
-                    "—".to_string()
+                    "-".to_string()
                 };
 
                 let row_style = if is_selected {
@@ -263,28 +368,25 @@ fn draw(f: &mut ratatui::Frame, entries: &[ServerEntry], selected: usize) {
         let table = Table::new(
             rows,
             [
-                Constraint::Length(20),
-                Constraint::Length(12),
+                Constraint::Min(20),
+                Constraint::Length(10),
                 Constraint::Length(18),
-                Constraint::Min(10),
+                Constraint::Length(12),
             ],
         )
         .header(header_row)
-        .block(
-            Block::default()
-                .borders(Borders::NONE)
-                .style(Style::default().bg(C_BG)),
-        );
+        .block(panel_block(config.language.choose("Servers", "Серверы")));
 
-        f.render_widget(table, chunks[1]);
+        f.render_widget(table, chunks[2]);
     }
 
-    // Footer
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled(" [↑↓] навигация  ", Style::default().fg(C_TEXT_DIM)),
-        Span::styled("[Enter] открыть  ", Style::default().fg(C_TEXT_DIM)),
-        Span::styled("[Q] выход", Style::default().fg(C_TEXT_DIM)),
-    ]))
-    .style(Style::default().bg(C_BG));
-    f.render_widget(footer, chunks[2]);
+        Span::styled(" enter ", strong_style()),
+        Span::styled(config.language.choose("open   ", "открыть   "), dim_style()),
+        Span::styled("j/k ", strong_style()),
+        Span::styled(config.language.choose("move   ", "выбор   "), dim_style()),
+        Span::styled("q ", strong_style()),
+        Span::styled(config.language.choose("quit", "выход"), dim_style()),
+    ]));
+    f.render_widget(footer, chunks[3]);
 }

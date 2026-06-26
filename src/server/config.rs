@@ -126,7 +126,7 @@ impl Default for BackupServerConfig {
 
 impl ServerConfig {
     pub fn load(server_dir: &Path) -> Result<Self> {
-        let config_path = server_dir.join("msc.toml");
+        let config_path = server_dir.join("anvil.toml");
         if !config_path.exists() {
             return Ok(Self::default());
         }

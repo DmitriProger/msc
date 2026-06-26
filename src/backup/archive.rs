@@ -27,13 +27,9 @@ pub fn create_zip_archive(
         .compression_method(zip::CompressionMethod::Deflated)
         .compression_level(Some(6));
 
-    let exclude_patterns: Vec<Pattern> = config
-        .exclude
-        .iter()
-        .filter_map(|p| Pattern::new(p).ok())
-        .collect();
+    let exclude_patterns = compile_exclude_patterns(&config.exclude);
 
-    let files = collect_files(server_dir, config, &exclude_patterns)?;
+    let files = collect_files(server_dir, output_path, config, &exclude_patterns)?;
     let mut total_bytes = 0u64;
 
     for file_path in files {
@@ -63,18 +59,34 @@ pub fn create_zip_archive(
 
 fn collect_files(
     server_dir: &Path,
+    output_path: &Path,
     config: &ArchiveConfig,
     exclude_patterns: &[Pattern],
 ) -> Result<Vec<PathBuf>> {
     let mut all_files = Vec::new();
 
     if config.include.is_empty() {
-        walk_dir(server_dir, server_dir, exclude_patterns, &mut all_files)?;
+        walk_dir(
+            server_dir,
+            server_dir,
+            output_path,
+            exclude_patterns,
+            &mut all_files,
+        )?;
     } else {
         for include_path in &config.include {
             let full = server_dir.join(include_path.trim_end_matches('/'));
+            if same_path(&full, output_path) {
+                continue;
+            }
             if full.is_dir() {
-                walk_dir(&full, server_dir, exclude_patterns, &mut all_files)?;
+                walk_dir(
+                    &full,
+                    server_dir,
+                    output_path,
+                    exclude_patterns,
+                    &mut all_files,
+                )?;
             } else if full.is_file() {
                 let relative = full.strip_prefix(server_dir).unwrap_or(&full);
                 if !is_excluded(relative, exclude_patterns) {
@@ -91,6 +103,7 @@ fn collect_files(
 fn walk_dir(
     dir: &Path,
     root: &Path,
+    output_path: &Path,
     exclude_patterns: &[Pattern],
     files: &mut Vec<PathBuf>,
 ) -> Result<()> {
@@ -99,6 +112,9 @@ fn walk_dir(
 
     for entry in entries.flatten() {
         let path = entry.path();
+        if same_path(&path, output_path) {
+            continue;
+        }
         let relative = path.strip_prefix(root).unwrap_or(&path);
 
         if is_excluded(relative, exclude_patterns) {
@@ -107,7 +123,7 @@ fn walk_dir(
 
         if path.is_dir() {
             files.push(path.clone());
-            walk_dir(&path, root, exclude_patterns, files)?;
+            walk_dir(&path, root, output_path, exclude_patterns, files)?;
         } else if path.is_file() {
             files.push(path);
         }
@@ -115,8 +131,35 @@ fn walk_dir(
     Ok(())
 }
 
+fn compile_exclude_patterns(patterns: &[String]) -> Vec<Pattern> {
+    let mut compiled = Vec::new();
+    for pattern in patterns {
+        if let Ok(p) = Pattern::new(pattern) {
+            compiled.push(p);
+        }
+
+        let trimmed = pattern.trim_end_matches('/');
+        if trimmed != pattern && !trimmed.is_empty() {
+            if let Ok(p) = Pattern::new(trimmed) {
+                compiled.push(p);
+            }
+            if let Ok(p) = Pattern::new(&format!("{}/**", trimmed)) {
+                compiled.push(p);
+            }
+        }
+    }
+    compiled
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 fn is_excluded(relative: &Path, patterns: &[Pattern]) -> bool {
-    let name = relative.to_string_lossy();
+    let name = relative.to_string_lossy().replace('\\', "/");
     for pattern in patterns {
         if pattern.matches(&name) {
             return true;

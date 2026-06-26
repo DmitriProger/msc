@@ -3,7 +3,7 @@ pub mod control;
 pub mod metrics;
 
 use crate::config::GlobalConfig;
-use crate::error::{MscError, Result};
+use crate::error::{AnvilError, Result};
 use config::ServerConfig;
 use regex::Regex;
 use std::path::PathBuf;
@@ -30,13 +30,13 @@ impl Server {
     #[allow(dead_code)]
     pub fn tmux_session_name(&self, socket: &str) -> String {
         let _ = socket;
-        format!("msc_{}", self.name)
+        format!("anvil_{}", self.name)
     }
 }
 
 pub fn validate_server_name(name: &str) -> Result<()> {
     if !server_name_regex().is_match(name) {
-        return Err(MscError::InvalidServerName(name.to_string()));
+        return Err(AnvilError::InvalidServerName(name.to_string()));
     }
     Ok(())
 }
@@ -99,7 +99,7 @@ pub fn find_server<'a>(servers: &'a [Server], name: &str) -> Result<&'a Server> 
     servers
         .iter()
         .find(|s| s.name == name)
-        .ok_or_else(|| MscError::ServerNotFound(name.to_string()))
+        .ok_or_else(|| AnvilError::ServerNotFound(name.to_string()))
 }
 
 pub fn validate_path_within_root(path: &std::path::Path, root: &std::path::Path) -> bool {
@@ -112,7 +112,7 @@ pub fn validate_path_within_root(path: &std::path::Path, root: &std::path::Path)
 pub fn check_start_script_executable(server: &Server) -> Result<()> {
     let start_sh = server.start_script();
     if !start_sh.exists() {
-        return Err(MscError::StartScriptMissing(
+        return Err(AnvilError::StartScriptMissing(
             server.path.display().to_string(),
         ));
     }
@@ -120,7 +120,7 @@ pub fn check_start_script_executable(server: &Server) -> Result<()> {
     let metadata = std::fs::metadata(&start_sh)?;
     let mode = metadata.permissions().mode();
     if mode & 0o111 == 0 {
-        return Err(MscError::StartScriptNotExecutable(
+        return Err(AnvilError::StartScriptNotExecutable(
             server.path.display().to_string(),
         ));
     }
@@ -136,8 +136,8 @@ mod tests {
         GlobalConfig {
             servers_root: root.to_string(),
             log_level: "info".to_string(),
-            tmux_socket: "msc".to_string(),
-            backup: Default::default(),
+            tmux_socket: "anvil".to_string(),
+            ..Default::default()
         }
     }
 
