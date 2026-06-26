@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: anvil-linux-x86_64
+            exe: ""
+          - os: ubuntu-24.04-arm
+            asset: anvil-linux-aarch64
+            exe: ""
+          - os: macos-13
+            asset: anvil-macos-x86_64
+            exe: ""
+          - os: macos-14
+            asset: anvil-macos-aarch64
+            exe: ""
+          - os: windows-latest
+            asset: anvil-windows-x86_64.exe
+            exe: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/release/anvil${{ matrix.exe }}" "dist/${{ matrix.asset }}"
+          chmod +x "dist/${{ matrix.asset }}" || true
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.asset }}

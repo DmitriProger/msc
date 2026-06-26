@@ -1,13 +1,17 @@
 [package]
-name = "msc"
+name = "anvil"
 version = "1.0.0"
 edition = "2021"
-description = "Minecraft Server Control — professional CLI for managing Minecraft servers on Linux"
+description = "Anvil - CLI for managing Minecraft servers on Linux"
 license = "MIT"
 
 [[bin]]
-name = "msc"
+name = "anvil"
 path = "src/main.rs"
+
+[lib]
+name = "anvil"
+path = "src/lib.rs"
 
 [dependencies]
 ratatui = "0.29"
@@ -30,6 +34,8 @@ zip = "2"
 glob = "0.3"
 regex = "1"
 tokio-cron-scheduler = "0.13"
+atty = "0.2"
+cron = "0.12"
 
 [dev-dependencies]
 assert_cmd = "2"

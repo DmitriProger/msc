@@ -1,0 +1,9 @@
+[limits]
+memory_max = "1G"
+cpu_cores = 1
+
+[server]
+description = "Test server"
+auto_restart = false
+restart_delay_secs = 1
+max_restart_attempts = 1
