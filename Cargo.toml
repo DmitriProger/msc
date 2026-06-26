@@ -1,0 +1,44 @@
+[package]
+name = "msc"
+version = "1.0.0"
+edition = "2021"
+description = "Minecraft Server Control — professional CLI for managing Minecraft servers on Linux"
+license = "MIT"
+
+[[bin]]
+name = "msc"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+inotify = "0.10"
+nix = { version = "0.29", features = ["signal", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+oauth2 = "4"
+zip = "2"
+glob = "0.3"
+regex = "1"
+tokio-cron-scheduler = "0.13"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+mockall = "0.13"
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
