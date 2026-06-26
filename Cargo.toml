@@ -9,6 +9,10 @@ license = "MIT"
 name = "msc"
 path = "src/main.rs"
 
+[lib]
+name = "msc"
+path = "src/lib.rs"
+
 [dependencies]
 ratatui = "0.29"
 crossterm = "0.28"
@@ -30,6 +34,8 @@ zip = "2"
 glob = "0.3"
 regex = "1"
 tokio-cron-scheduler = "0.13"
+atty = "0.2"
+cron = "0.12"
 
 [dev-dependencies]
 assert_cmd = "2"
