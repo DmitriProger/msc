@@ -46,10 +46,7 @@ fn build_launch_command(server: &Server) -> String {
     let limits = &server.config.limits;
 
     // Validate affinity once; ignore (with a warning) if it isn't a clean CPU list.
-    let affinity = limits
-        .cpu_affinity
-        .as_deref()
-        .filter(|a| valid_cpu_list(a));
+    let affinity = limits.cpu_affinity.as_deref().filter(|a| valid_cpu_list(a));
     if limits.cpu_affinity.is_some() && affinity.is_none() {
         tracing::warn!(
             server = %server.name,
@@ -100,7 +97,11 @@ pub fn xmx_warning(server: &Server) -> Option<String> {
     let content = std::fs::read_to_string(server.start_script()).ok()?;
     let xmx = content
         .split_whitespace()
-        .find_map(|tok| tok.trim_matches('"').trim_matches('\'').strip_prefix("-Xmx"))
+        .find_map(|tok| {
+            tok.trim_matches('"')
+                .trim_matches('\'')
+                .strip_prefix("-Xmx")
+        })
         .map(parse_jvm_mem)
         .filter(|&n| n > 0)?;
     let limit = parse_memory_str(&server.config.limits.memory_max);

@@ -214,6 +214,28 @@ fn read_proc_stat_fields_after_comm(pid: u32) -> Result<Vec<String>> {
         .collect())
 }
 
+/// Total physical RAM on the host in bytes (from /proc/meminfo MemTotal).
+pub fn get_total_ram_bytes() -> u64 {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|content| {
+            content.lines().find_map(|line| {
+                line.strip_prefix("MemTotal:")
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .and_then(|kb| kb.parse::<u64>().ok())
+                    .map(|kb| kb * 1024)
+            })
+        })
+        .unwrap_or(0)
+}
+
+/// Number of logical CPUs available to the process.
+pub fn cpu_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
 pub fn get_system_uptime_secs() -> f64 {
     std::fs::read_to_string("/proc/uptime")
         .ok()

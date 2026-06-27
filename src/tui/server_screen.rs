@@ -8,7 +8,7 @@ use crate::tmux::TmuxClient;
 use crate::tui::widgets::*;
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -24,22 +24,20 @@ use std::io;
 use std::time::{Duration, Instant};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const MIN_WIDTH: u16 = 50;
+const MIN_HEIGHT: u16 = 22;
 
 pub fn run(server_name: String, config: GlobalConfig) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = server_loop(&mut terminal, &server_name, &config);
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     result
@@ -146,21 +144,13 @@ fn server_loop(
                         let session = format!("anvil_{}", server_name);
                         if tmux.session_exists(&session) {
                             disable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                LeaveAlternateScreen,
-                                DisableMouseCapture
-                            )?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                             terminal.show_cursor()?;
 
                             let _ = tmux.attach_session(&session);
 
                             enable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                EnterAlternateScreen,
-                                EnableMouseCapture
-                            )?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                             terminal.clear()?;
                         } else {
                             error_msg = Some(format!(
@@ -191,6 +181,15 @@ fn draw(
     error_msg: Option<&str>,
 ) {
     let size = f.area();
+    if size.width < MIN_WIDTH || size.height < MIN_HEIGHT {
+        let msg = Paragraph::new(format!(
+            "Terminal too small ({}x{}). Minimum {}x{}.",
+            size.width, size.height, MIN_WIDTH, MIN_HEIGHT
+        ))
+        .style(Style::default().fg(C_ERROR));
+        f.render_widget(msg, size);
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)

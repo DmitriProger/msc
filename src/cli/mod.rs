@@ -685,12 +685,16 @@ fn maybe_upload_gdrive(config: &GlobalConfig, file: &Path, printer: &Printer) {
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            printer.warn(&format!("Could not start uploader (kept local copy): {}", e));
+            printer.warn(&format!(
+                "Could not start uploader (kept local copy): {}",
+                e
+            ));
             return;
         }
     };
     let result = rt.block_on(async move {
-        let oauth = crate::backup::oauth::OAuthClient::new(String::new(), String::new(), token_path);
+        let oauth =
+            crate::backup::oauth::OAuthClient::new(String::new(), String::new(), token_path);
         let token = oauth.get_valid_token().await?;
         let drive = crate::backup::gdrive::DriveClient::new(token);
         let folder_id = drive.find_or_create_folder(&folder, None).await?;
@@ -731,7 +735,11 @@ pub fn cmd_backup_list(name: &str, config: &GlobalConfig) -> Result<()> {
         Err(_) => Vec::new(),
     };
     if archives.is_empty() {
-        printer.info(&format!("No backups found for {} in {}", name, dir.display()));
+        printer.info(&format!(
+            "No backups found for {} in {}",
+            name,
+            dir.display()
+        ));
         return Ok(());
     }
     archives.sort();

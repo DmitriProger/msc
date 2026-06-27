@@ -6,10 +6,10 @@ use ratatui::{
 };
 
 pub const C_BORDER: Color = Color::Rgb(0x3f, 0x46, 0x43);
-pub const C_TEXT: Color = Color::Rgb(0xb8, 0xbe, 0xba);
+pub const C_TEXT: Color = Color::Rgb(0xc2, 0xc8, 0xc4);
 pub const C_TEXT_STRONG: Color = Color::Rgb(0xe4, 0xe7, 0xe5);
-pub const C_TEXT_DIM: Color = Color::Rgb(0x74, 0x7b, 0x77);
-pub const C_TEXT_DARK: Color = Color::Rgb(0x56, 0x5e, 0x5a);
+pub const C_TEXT_DIM: Color = Color::Rgb(0x90, 0x96, 0x91);
+pub const C_TEXT_DARK: Color = Color::Rgb(0x75, 0x7c, 0x78);
 pub const C_ACCENT: Color = Color::Rgb(0x5f, 0x7f, 0x7a);
 pub const C_ACCENT_DIM: Color = Color::Rgb(0x3f, 0x57, 0x54);
 pub const C_SUCCESS: Color = C_ACCENT;
@@ -48,12 +48,27 @@ pub fn progress_bar(value: f64, max: f64, width: usize) -> Line<'static> {
     } else {
         0.0
     };
-    let filled = (ratio * width as f64).round() as usize;
-    let empty = width.saturating_sub(filled);
+    // Eighth-block resolution for a smooth, modern bar.
+    let total_eighths = (ratio * width as f64 * 8.0).round() as usize;
+    let full = total_eighths / 8;
+    let partial = match total_eighths % 8 {
+        1 => "▏",
+        2 => "▎",
+        3 => "▍",
+        4 => "▌",
+        5 => "▋",
+        6 => "▊",
+        7 => "▉",
+        _ => "",
+    };
+    let mut bar = "█".repeat(full);
+    bar.push_str(partial);
+    let used = full + usize::from(!partial.is_empty());
+    let empty = width.saturating_sub(used);
 
     Line::from(vec![
-        Span::styled("#".repeat(filled), Style::default().fg(C_ACCENT)),
-        Span::styled("-".repeat(empty), Style::default().fg(C_BORDER)),
+        Span::styled(bar, Style::default().fg(C_ACCENT)),
+        Span::styled("░".repeat(empty), Style::default().fg(C_BORDER)),
     ])
 }
 
