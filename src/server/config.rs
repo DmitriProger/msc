@@ -142,6 +142,44 @@ impl ServerConfig {
     }
 }
 
+/// Validate a CPU list string as accepted by `taskset -c` / cgroup `AllowedCPUs`,
+/// e.g. "0", "0,1", "3-6", "0,2-4". Rejects anything else so the value can be
+/// safely interpolated into a launch command (prevents shell injection).
+pub fn valid_cpu_list(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    s.split(',').all(|part| {
+        let part = part.trim();
+        if part.is_empty() {
+            return false;
+        }
+        match part.split_once('-') {
+            Some((a, b)) => {
+                !a.is_empty()
+                    && !b.is_empty()
+                    && a.chars().all(|c| c.is_ascii_digit())
+                    && b.chars().all(|c| c.is_ascii_digit())
+            }
+            None => part.chars().all(|c| c.is_ascii_digit()),
+        }
+    })
+}
+
+/// Parse a JVM-style memory size (e.g. "-Xmx" value "14336M", "4g", "512000")
+/// into bytes. Accepts upper/lowercase g/m/k suffixes; bare numbers are bytes.
+pub fn parse_jvm_mem(s: &str) -> u64 {
+    let s = s.trim().trim_matches('"').trim_matches('\'');
+    let (num, mult) = match s.chars().last() {
+        Some('g') | Some('G') => (&s[..s.len().saturating_sub(1)], 1024u64 * 1024 * 1024),
+        Some('m') | Some('M') => (&s[..s.len().saturating_sub(1)], 1024 * 1024),
+        Some('k') | Some('K') => (&s[..s.len().saturating_sub(1)], 1024),
+        _ => (s, 1),
+    };
+    num.trim().parse::<u64>().map(|n| n * mult).unwrap_or(0)
+}
+
 pub fn parse_memory_str(s: &str) -> u64 {
     let s = s.trim();
     if let Some(n) = s.strip_suffix('G') {
@@ -164,6 +202,28 @@ mod tests {
         assert_eq!(parse_memory_str("4G"), 4 * 1024 * 1024 * 1024);
         assert_eq!(parse_memory_str("512M"), 512 * 1024 * 1024);
         assert_eq!(parse_memory_str("1024K"), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_valid_cpu_list() {
+        assert!(valid_cpu_list("0"));
+        assert!(valid_cpu_list("0,1"));
+        assert!(valid_cpu_list("3-6"));
+        assert!(valid_cpu_list("0,2-4,7"));
+        assert!(!valid_cpu_list(""));
+        assert!(!valid_cpu_list("0; rm -rf /"));
+        assert!(!valid_cpu_list("0,"));
+        assert!(!valid_cpu_list("a-b"));
+        assert!(!valid_cpu_list("1 2"));
+    }
+
+    #[test]
+    fn test_parse_jvm_mem() {
+        assert_eq!(parse_jvm_mem("4G"), 4 * 1024 * 1024 * 1024);
+        assert_eq!(parse_jvm_mem("14336M"), 14336 * 1024 * 1024);
+        assert_eq!(parse_jvm_mem("512k"), 512 * 1024);
+        assert_eq!(parse_jvm_mem("\"2g\""), 2 * 1024 * 1024 * 1024);
+        assert_eq!(parse_jvm_mem("1048576"), 1048576);
     }
 
     #[test]

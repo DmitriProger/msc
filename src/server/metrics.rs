@@ -175,11 +175,11 @@ pub fn format_uptime(secs: u64) -> String {
     let hours = (secs % 86400) / 3600;
     let minutes = (secs % 3600) / 60;
     if days > 0 {
-        format!("{}д {}ч {}м", days, hours, minutes)
+        format!("{}d {}h {}m", days, hours, minutes)
     } else if hours > 0 {
-        format!("{}ч {}м", hours, minutes)
+        format!("{}h {}m", hours, minutes)
     } else {
-        format!("{}м", minutes)
+        format!("{}m", minutes)
     }
 }
 

@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.1)"
+        required: true
 
 permissions:
   contents: write
@@ -29,9 +33,6 @@ jobs:
           - os: macos-14
             asset: anvil-macos-aarch64
             exe: ""
-          - os: windows-latest
-            asset: anvil-windows-x86_64.exe
-            exe: ".exe"
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +55,131 @@ jobs:
           cp "target/release/anvil${{ matrix.exe }}" "dist/${{ matrix.asset }}"
           chmod +x "dist/${{ matrix.asset }}" || true
 
-      - name: Upload release asset
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          cd dist
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release
+          cat *.sha256 > checksums.sha256.txt
+          rm -f *.sha256
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get version from tag
+        id: version
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # Find the previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -n1) || true
+
+          {
+            echo "body<<CHANGELOG_EOF"
+
+            echo "## What's Changed"
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              # Group commits by type
+              for TYPE_LABEL in "feat:Features" "fix:Bug Fixes" "refactor:Refactoring" "docs:Documentation" "chore:Maintenance"; do
+                TYPE="${TYPE_LABEL%%:*}"
+                LABEL="${TYPE_LABEL##*:}"
+                COMMITS=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"- %s" --grep="^${TYPE}" 2>/dev/null || true)
+                if [ -n "$COMMITS" ]; then
+                  echo "### ${LABEL}"
+                  echo ""
+                  echo "$COMMITS"
+                  echo ""
+                fi
+              done
+
+              # Other commits that don't match conventional format
+              OTHER=$(git log "${PREV_TAG}..${TAG}" --pretty=format:"%s" 2>/dev/null | grep -v -E "^(feat|fix|refactor|docs|chore)" || true)
+              if [ -n "$OTHER" ]; then
+                echo "### Other"
+                echo ""
+                echo "$OTHER" | sed 's/^/- /'
+                echo ""
+              fi
+
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+            else
+              git log "${TAG}" --pretty=format:"- %s" 2>/dev/null || echo "- Initial release"
+            fi
+
+            echo ""
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo '```bash'
+            echo "# Download the binary for your platform"
+            echo "curl -fsSL https://github.com/${{ github.repository }}/releases/download/${TAG}/anvil-linux-x86_64 -o anvil"
+            echo "chmod +x anvil"
+            echo "sudo mv anvil /usr/local/bin/"
+            echo '```'
+            echo ""
+            echo "Or update an existing installation:"
+            echo ""
+            echo '```bash'
+            echo "sudo anvil update"
+            echo '```'
+            echo ""
+            echo "## Checksums"
+            echo ""
+            echo "SHA256 checksums are provided in \`checksums.sha256.txt\`."
+            echo "Verify your download:"
+            echo ""
+            echo '```bash'
+            echo "sha256sum -c checksums.sha256.txt --ignore-missing"
+            echo '```'
+
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ matrix.asset }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Anvil ${{ steps.version.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: release/*
+          fail_on_unmatched_files: true

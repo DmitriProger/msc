@@ -11,7 +11,7 @@ pub const DEFAULT_LOG_PATH: &str = "/var/log/anvil/anvil.log";
 pub const DEFAULT_GDRIVE_TOKEN_PATH: &str = "/var/lib/anvil/gdrive_token.json";
 pub const DEFAULT_TMP_DIR: &str = "/var/lib/anvil/tmp";
 pub const DEFAULT_WATCHDOG_LOCK: &str = "/var/lib/anvil/watchdog.lock";
-pub const DEFAULT_UPDATE_REPO: &str = "DmitriProger/anvil";
+pub const DEFAULT_UPDATE_REPO: &str = "DmitriProger/msc";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

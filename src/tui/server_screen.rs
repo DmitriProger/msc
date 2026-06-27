@@ -55,15 +55,17 @@ fn server_loop(
     let mut metrics = ServerMetrics::default();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
     let mut error_msg: Option<String> = None;
+    let mut server: Option<Server> = None;
+    let mut online = false;
 
     loop {
-        let servers = discover_servers(config);
-        let server = find_server(&servers, server_name).ok().cloned();
-        let controller = ServerController::new(&tmux, config);
-
         if last_refresh.elapsed() >= REFRESH_INTERVAL {
+            let servers = discover_servers(config);
+            server = find_server(&servers, server_name).ok().cloned();
+            let controller = ServerController::new(&tmux, config);
+
             if let Some(ref srv) = server {
-                let online = controller.is_online(srv);
+                online = controller.is_online(srv);
                 if online {
                     if let Some(pid) = controller.get_server_pid(srv) {
                         metrics = metrics_collector.collect(pid).unwrap_or_default();
@@ -72,14 +74,12 @@ fn server_loop(
                 } else {
                     metrics = ServerMetrics::default();
                 }
+            } else {
+                online = false;
+                metrics = ServerMetrics::default();
             }
             last_refresh = Instant::now();
         }
-
-        let online = server
-            .as_ref()
-            .map(|s| controller.is_online(s))
-            .unwrap_or(false);
 
         terminal.draw(|f| {
             draw(
@@ -104,6 +104,7 @@ fn server_loop(
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         error_msg = None;
                         if let Some(ref srv) = server {
+                            let controller = ServerController::new(&tmux, config);
                             let mut state =
                                 AppState::load(&config.state_path()).unwrap_or_default();
                             match controller.restart(srv, &mut state) {
@@ -111,11 +112,13 @@ fn server_loop(
                                 Err(e) => error_msg = Some(e.to_string()),
                             }
                         }
+                        last_refresh = Instant::now() - REFRESH_INTERVAL;
                     }
                     KeyCode::Char('s') | KeyCode::Char('S') => {
                         error_msg = None;
                         if online {
                             if let Some(ref srv) = server {
+                                let controller = ServerController::new(&tmux, config);
                                 let mut state =
                                     AppState::load(&config.state_path()).unwrap_or_default();
                                 match controller.stop(srv, &mut state) {
@@ -124,10 +127,12 @@ fn server_loop(
                                 }
                             }
                         }
+                        last_refresh = Instant::now() - REFRESH_INTERVAL;
                     }
                     KeyCode::Enter if !online => {
                         error_msg = None;
                         if let Some(ref srv) = server {
+                            let controller = ServerController::new(&tmux, config);
                             let mut state =
                                 AppState::load(&config.state_path()).unwrap_or_default();
                             match controller.start(srv, &mut state) {
@@ -135,6 +140,7 @@ fn server_loop(
                                 Err(e) => error_msg = Some(e.to_string()),
                             }
                         }
+                        last_refresh = Instant::now() - REFRESH_INTERVAL;
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') if online => {
                         let session = format!("anvil_{}", server_name);
@@ -166,6 +172,7 @@ fn server_loop(
                                 server_name
                             ));
                         }
+                        last_refresh = Instant::now() - REFRESH_INTERVAL;
                     }
                     _ => {}
                 }

@@ -1,13 +1,120 @@
+use super::config::{parse_jvm_mem, parse_memory_str, valid_cpu_list};
 use super::{check_start_script_executable, Server};
 use crate::config::GlobalConfig;
 use crate::error::{AnvilError, Result};
+use crate::server::metrics::format_bytes;
 use crate::state::{AppState, DesiredState};
 use crate::tmux::{get_child_pid, has_child_processes, TmuxClient};
 use std::time::{Duration, Instant};
 
+/// How long to wait for a graceful in-game `stop` before escalating to signals.
+const STOP_GRACE_SECS: u64 = 60;
+/// How long to wait after SIGTERM before sending SIGKILL.
+const SIGTERM_WAIT_SECS: u64 = 10;
+
 pub struct ServerController<'a> {
     pub tmux: &'a TmuxClient,
     pub config: &'a GlobalConfig,
+}
+
+/// Effective UID of the current process (0 = root). Used to pick between a
+/// system scope and a `--user` scope for `systemd-run`.
+fn effective_uid() -> u32 {
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    unsafe { geteuid() }
+}
+
+/// Is `systemd-run` available so we can enforce real cgroup resource limits?
+fn systemd_run_available() -> bool {
+    std::process::Command::new("systemd-run")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Build the command (typed into the tmux pane) that launches the server.
+///
+/// When `systemd-run` is available, the server runs inside a transient cgroup
+/// v2 scope with real `MemoryMax`/`MemoryHigh`/`CPUQuota`/`AllowedCPUs` limits
+/// enforced by the kernel — independent of any `-Xmx` flags in start.sh.
+/// Otherwise it degrades gracefully to `taskset` (affinity only) or a plain
+/// launch, logging that limits are NOT enforced rather than failing to start.
+fn build_launch_command(server: &Server) -> String {
+    let limits = &server.config.limits;
+
+    // Validate affinity once; ignore (with a warning) if it isn't a clean CPU list.
+    let affinity = limits
+        .cpu_affinity
+        .as_deref()
+        .filter(|a| valid_cpu_list(a));
+    if limits.cpu_affinity.is_some() && affinity.is_none() {
+        tracing::warn!(
+            server = %server.name,
+            value = ?limits.cpu_affinity,
+            "Ignoring invalid cpu_affinity (must be a CPU list like 0,1 or 3-6)"
+        );
+    }
+
+    if systemd_run_available() {
+        let mem_max = parse_memory_str(&limits.memory_max);
+        let mem_high = (mem_max as f64 * 0.85) as u64;
+        let cpu_quota = limits.cpu_cores.max(1) * 100;
+        let scope_flags = if effective_uid() == 0 {
+            "--scope"
+        } else {
+            "--scope --user"
+        };
+        let mut cmd = format!(
+            "systemd-run {flags} --quiet --collect --unit=anvil-{name} \
+             -p MemoryMax={mem_max} -p MemoryHigh={mem_high} -p CPUQuota={quota}%",
+            flags = scope_flags,
+            name = server.name,
+            mem_max = mem_max,
+            mem_high = mem_high,
+            quota = cpu_quota,
+        );
+        if let Some(a) = affinity {
+            cmd.push_str(&format!(" -p AllowedCPUs={}", a));
+        }
+        cmd.push_str(" ./start.sh");
+        cmd
+    } else {
+        tracing::warn!(
+            server = %server.name,
+            "systemd-run unavailable; resource limits (RAM/CPU) are NOT enforced"
+        );
+        match affinity {
+            Some(a) => format!("taskset -c {} ./start.sh", a),
+            None => "./start.sh".to_string(),
+        }
+    }
+}
+
+/// Returns a human-readable warning when start.sh requests a `-Xmx` heap larger
+/// than the configured `memory_max` cgroup ceiling (which would get the JVM
+/// OOM-killed). Returns `None` when there's no conflict or no `-Xmx` present.
+pub fn xmx_warning(server: &Server) -> Option<String> {
+    let content = std::fs::read_to_string(server.start_script()).ok()?;
+    let xmx = content
+        .split_whitespace()
+        .find_map(|tok| tok.trim_matches('"').trim_matches('\'').strip_prefix("-Xmx"))
+        .map(parse_jvm_mem)
+        .filter(|&n| n > 0)?;
+    let limit = parse_memory_str(&server.config.limits.memory_max);
+    if limit > 0 && xmx > limit {
+        Some(format!(
+            "start.sh sets -Xmx={} which exceeds memory_max={} ({}); \
+             the JVM may be OOM-killed by the cgroup limit. Lower -Xmx below memory_max (leave ~1G headroom).",
+            format_bytes(xmx),
+            server.config.limits.memory_max,
+            format_bytes(limit),
+        ))
+    } else {
+        None
+    }
 }
 
 impl<'a> ServerController<'a> {
@@ -58,12 +165,11 @@ impl<'a> ServerController<'a> {
         self.tmux.new_session(&session, working_dir)?;
         tracing::trace!(server = %server.name, session = %session, "Created tmux session");
 
-        let start_cmd = if let Some(affinity) = &server.config.limits.cpu_affinity {
-            format!("taskset -c {} ./start.sh", affinity)
-        } else {
-            "./start.sh".to_string()
-        };
+        if let Some(warning) = xmx_warning(server) {
+            tracing::warn!(server = %server.name, "{}", warning);
+        }
 
+        let start_cmd = build_launch_command(server);
         self.tmux.run_in_session(&session, &start_cmd)?;
         tracing::info!(server = %server.name, "Server start command sent");
 
@@ -97,7 +203,7 @@ impl<'a> ServerController<'a> {
             tracing::warn!(server = %server.name, error = %e, "Failed to send stop command");
         }
 
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(STOP_GRACE_SECS);
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_secs(1));
             if !self.is_online(server) {
@@ -107,9 +213,13 @@ impl<'a> ServerController<'a> {
         }
 
         if self.is_online(server) {
-            tracing::warn!(server = %server.name, "Server did not stop in 30s, sending SIGTERM");
+            tracing::warn!(
+                server = %server.name,
+                "Server did not stop in {}s, sending SIGTERM",
+                STOP_GRACE_SECS
+            );
             self.send_signal(server, nix::sys::signal::Signal::SIGTERM);
-            std::thread::sleep(Duration::from_secs(10));
+            std::thread::sleep(Duration::from_secs(SIGTERM_WAIT_SECS));
         }
 
         if self.is_online(server) {
@@ -153,5 +263,53 @@ impl<'a> ServerController<'a> {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::config::ServerConfig;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn server_with_script(dir: &std::path::Path, memory_max: &str, script: &str) -> Server {
+        std::fs::write(dir.join("start.sh"), script).unwrap();
+        let mut config = ServerConfig::default();
+        config.limits.memory_max = memory_max.to_string();
+        Server {
+            name: "test".to_string(),
+            path: PathBuf::from(dir),
+            config,
+        }
+    }
+
+    #[test]
+    fn xmx_warning_fires_when_heap_exceeds_limit() {
+        let dir = tempdir().unwrap();
+        let server = server_with_script(
+            dir.path(),
+            "4G",
+            "#!/bin/bash\njava -Xms1G -Xmx8G -jar server.jar nogui\n",
+        );
+        assert!(xmx_warning(&server).is_some());
+    }
+
+    #[test]
+    fn xmx_warning_silent_when_heap_within_limit() {
+        let dir = tempdir().unwrap();
+        let server = server_with_script(
+            dir.path(),
+            "8G",
+            "#!/bin/bash\njava -Xms1G -Xmx6G -jar server.jar nogui\n",
+        );
+        assert!(xmx_warning(&server).is_none());
+    }
+
+    #[test]
+    fn xmx_warning_silent_without_xmx() {
+        let dir = tempdir().unwrap();
+        let server = server_with_script(dir.path(), "4G", "#!/bin/bash\n./run.sh\n");
+        assert!(xmx_warning(&server).is_none());
     }
 }

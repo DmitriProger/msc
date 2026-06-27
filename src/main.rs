@@ -270,17 +270,15 @@ fn handle_server_backup(
     name: &str,
     sub: Option<&str>,
     arg: Option<&str>,
-    _config: &GlobalConfig,
+    config: &GlobalConfig,
 ) -> Result<()> {
     let printer = cli::Printer::new();
     match sub {
         None => {
-            printer.info(&format!("Starting backup for {}...", name));
-            printer.warn("Backup requires Google Drive auth. Run `anvil backup auth` first.");
+            let _ = cli::cmd_backup_create(name, config).map_err(|_| std::process::exit(1));
         }
         Some("list") => {
-            printer.info(&format!("Fetching backup list for {}...", name));
-            printer.warn("Configure Google Drive first: `anvil backup auth`");
+            let _ = cli::cmd_backup_list(name, config).map_err(|_| std::process::exit(1));
         }
         Some("restore") => {
             let filename = arg.unwrap_or("");
@@ -292,7 +290,7 @@ fn handle_server_backup(
                 "This will overwrite the current server data for {}",
                 name
             ));
-            printer.warn("Server will be stopped during restore");
+            printer.warn("The server will be stopped during restore");
             print!("\nProceed? [y/N] ");
             use std::io::Write;
             std::io::stdout().flush().ok();
@@ -302,7 +300,8 @@ fn handle_server_backup(
                 printer.info("Cancelled");
                 return Ok(());
             }
-            printer.warn("Restore not yet fully implemented.");
+            let _ =
+                cli::cmd_backup_restore(name, filename, config).map_err(|_| std::process::exit(1));
         }
         Some(unknown) => {
             printer.error(&format!("Unknown backup subcommand: {}", unknown));

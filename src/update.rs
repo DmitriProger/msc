@@ -266,7 +266,6 @@ pub fn asset_name_for(os: &str, arch: &str) -> Result<String> {
         ("linux", "aarch64") => Ok("anvil-linux-aarch64".to_string()),
         ("macos", "x86_64") => Ok("anvil-macos-x86_64".to_string()),
         ("macos", "aarch64") => Ok("anvil-macos-aarch64".to_string()),
-        ("windows", "x86_64") => Ok("anvil-windows-x86_64.exe".to_string()),
         _ => bail!("Self-update is not supported on {os}/{arch} yet"),
     }
 }
