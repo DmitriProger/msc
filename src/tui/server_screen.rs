@@ -4,7 +4,7 @@ use crate::server::metrics::{
 };
 use crate::server::{control::ServerController, discover_servers, find_server, Server};
 use crate::state::AppState;
-use crate::tmux::TmuxClient;
+use crate::screen::ScreenClient;
 use crate::tui::widgets::*;
 use anyhow::Result;
 use crossterm::{
@@ -48,7 +48,7 @@ fn server_loop(
     server_name: &str,
     config: &GlobalConfig,
 ) -> Result<()> {
-    let tmux = TmuxClient::new(&config.tmux_socket);
+    let tmux = ScreenClient::new(&config.tmux_socket);
     let mut metrics_collector = MetricsCollector::new();
     let mut metrics = ServerMetrics::default();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
@@ -141,7 +141,7 @@ fn server_loop(
                         last_refresh = Instant::now() - REFRESH_INTERVAL;
                     }
                     KeyCode::Char('c') | KeyCode::Char('C') if online => {
-                        let session = format!("anvil_{}", server_name);
+                        let session = server_name.to_string();
                         if tmux.session_exists(&session) {
                             disable_raw_mode()?;
                             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -149,7 +149,7 @@ fn server_loop(
 
                             println!("\n====================================================");
                             println!("Connecting to Minecraft Console.");
-                            println!("- To DETACH and return: Press Ctrl+X (or Ctrl+B, then D)");
+                            println!("- To DETACH and return: Press Ctrl+A, then D (or Ctrl+X)");
                             println!("- If the input field disappears (on scroll): Press Q to return it");
                             println!("====================================================\n");
                             std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -163,8 +163,8 @@ fn server_loop(
                             error_msg = Some(format!(
                                 "{} {}",
                                 config.language.choose(
-                                    "tmux session not found for",
-                                    "tmux-сессия не найдена для"
+                                    "screen session not found for",
+                                    "screen-сессия не найдена для"
                                 ),
                                 server_name
                             ));

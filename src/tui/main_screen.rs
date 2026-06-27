@@ -3,7 +3,7 @@ use crate::server::metrics::{
     cpu_count, format_bytes, get_process_uptime_secs, get_total_ram_bytes, MetricsCollector,
 };
 use crate::server::{control::ServerController, discover_servers, Server};
-use crate::tmux::TmuxClient;
+use crate::screen::ScreenClient;
 use crate::tui::server_screen;
 use crate::tui::widgets::*;
 use anyhow::Result;
@@ -125,7 +125,7 @@ fn collect_entries(
     config: &GlobalConfig,
     collectors: &mut HashMap<String, MetricsCollector>,
 ) -> Vec<ServerEntry> {
-    let tmux = TmuxClient::new(&config.tmux_socket);
+    let tmux = ScreenClient::new(&config.tmux_socket);
     let servers = discover_servers(config);
     let controller = ServerController::new(&tmux, config);
 
