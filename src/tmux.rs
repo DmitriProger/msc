@@ -150,13 +150,31 @@ fn collect_descendants(pid: u32, descendants: &mut Vec<u32>) {
 
 fn direct_child_pids(pid: u32) -> Vec<u32> {
     let children_path = format!("/proc/{}/task/{}/children", pid, pid);
-    std::fs::read_to_string(&children_path)
-        .ok()
-        .map(|content| {
-            content
+    if let Ok(content) = std::fs::read_to_string(&children_path) {
+        let pids: Vec<u32> = content
+            .split_whitespace()
+            .filter_map(|pid| pid.parse::<u32>().ok())
+            .collect();
+        if !pids.is_empty() {
+            return pids;
+        }
+    }
+
+    // Fallback for macOS or Linux systems without proc children support
+    if let Ok(output) = std::process::Command::new("pgrep")
+        .arg("-P")
+        .arg(pid.to_string())
+        .output()
+    {
+        if output.status.success() {
+            let content = String::from_utf8_lossy(&output.stdout);
+            let pids: Vec<u32> = content
                 .split_whitespace()
-                .filter_map(|pid| pid.parse::<u32>().ok())
-                .collect()
-        })
-        .unwrap_or_default()
+                .filter_map(|p| p.parse::<u32>().ok())
+                .collect();
+            return pids;
+        }
+    }
+
+    Vec::new()
 }
