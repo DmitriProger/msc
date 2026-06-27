@@ -26,13 +26,36 @@ fn effective_uid() -> u32 {
     unsafe { geteuid() }
 }
 
-/// Is `systemd-run` available so we can enforce real cgroup resource limits?
+/// Is `systemd-run` available and functional so we can enforce real cgroup resource limits?
 fn systemd_run_available() -> bool {
-    std::process::Command::new("systemd-run")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let version_ok = std::process::Command::new("systemd-run")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !version_ok {
+            return false;
+        }
+
+        // Try a dry-run check to see if we can actually create a transient scope.
+        // Set SYSTEMD_ASK_PASSWORD=0 to fail immediately if polkit auth is required
+        // instead of hanging the terminal.
+        let is_root = effective_uid() == 0;
+        let mut cmd = std::process::Command::new("systemd-run");
+        cmd.env("SYSTEMD_ASK_PASSWORD", "0");
+        cmd.arg("--scope");
+        if !is_root {
+            cmd.arg("--user");
+        }
+        cmd.arg("true");
+
+        cmd.output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
 }
 
 /// Single-quote a value for safe interpolation into the shell launch line.
