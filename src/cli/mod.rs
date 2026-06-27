@@ -554,6 +554,13 @@ pub fn cmd_console(name: &str, global_config: &GlobalConfig) -> Result<()> {
         return Err(AnvilError::TmuxSessionNotFound(session).into());
     }
 
+    println!("\n====================================================");
+    println!("Connecting to Minecraft Console.");
+    println!("- To DETACH and return: Press Ctrl+X (or Ctrl+B, then D)");
+    println!("- If the input field disappears (on scroll): Press Q to return it");
+    println!("====================================================\n");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
     tmux.attach_session(&session)?;
     Ok(())
 }

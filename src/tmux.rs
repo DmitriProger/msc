@@ -75,6 +75,8 @@ impl TmuxClient {
         self.run(&["new-session", "-d", "-s", session, "-c", working_dir])?;
         // Enable mouse support to allow scroll wheel log navigation
         let _ = self.run(&["set-option", "-t", session, "mouse", "on"]);
+        // Bind Ctrl+X to detach from the tmux session without needing the prefix
+        let _ = self.run(&["bind-key", "-n", "C-x", "detach-client"]);
         Ok(())
     }
 

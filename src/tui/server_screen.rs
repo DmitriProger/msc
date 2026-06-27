@@ -147,6 +147,13 @@ fn server_loop(
                             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                             terminal.show_cursor()?;
 
+                            println!("\n====================================================");
+                            println!("Connecting to Minecraft Console.");
+                            println!("- To DETACH and return: Press Ctrl+X (or Ctrl+B, then D)");
+                            println!("- If the input field disappears (on scroll): Press Q to return it");
+                            println!("====================================================\n");
+                            std::thread::sleep(std::time::Duration::from_millis(1500));
+
                             let _ = tmux.attach_session(&session);
 
                             enable_raw_mode()?;
