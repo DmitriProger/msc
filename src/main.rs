@@ -85,8 +85,40 @@ enum BackupCommand {
     Status,
 }
 
+fn is_root() -> bool {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Prevent running server management commands as root (UID 0) to avoid tmux owner conflicts.
+    // Allow install, uninstall, update, version, and the watchdog daemon itself.
+    if is_root() && !cli.watchdog {
+        let is_allowed_cmd = match &cli.command {
+            Some(Command::Install) | Some(Command::Uninstall) | Some(Command::Version) | Some(Command::Update(_)) => true,
+            _ => false,
+        };
+        if !is_allowed_cmd {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let subcmd = if args.is_empty() { String::new() } else { format!(" {}", args.join(" ")) };
+            eprintln!("Error: Running server management commands as root is not permitted.");
+            eprintln!("It creates tmux sessions owned by root, which conflicts with the minecraft daemon.");
+            eprintln!("Please run commands as the 'minecraft' user instead, for example:");
+            eprintln!("  sudo -u minecraft anvil{}", subcmd);
+            std::process::exit(1);
+        }
+    }
 
     let global_config = GlobalConfig::load()?;
 
