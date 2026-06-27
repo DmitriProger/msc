@@ -73,6 +73,8 @@ impl TmuxClient {
 
     pub fn new_session(&self, session: &str, working_dir: &str) -> Result<()> {
         self.run(&["new-session", "-d", "-s", session, "-c", working_dir])?;
+        // Enable mouse support to allow scroll wheel log navigation
+        let _ = self.run(&["set-option", "-t", session, "mouse", "on"]);
         Ok(())
     }
 
