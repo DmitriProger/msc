@@ -441,7 +441,7 @@ pub fn cmd_stop(name: &str, global_config: &GlobalConfig) -> Result<()> {
     let controller = ServerController::new(&tmux, global_config);
 
     printer.info(&format!("Sending stop command to {}...", name));
-    printer.dim("Waiting for process to exit  (30s timeout)");
+    printer.dim("Waiting for process to exit  (60s timeout, then SIGTERM/SIGKILL)");
     match controller.stop(server, &mut state) {
         Ok(()) => {
             printer.success(&format!("Server {} stopped", name));
