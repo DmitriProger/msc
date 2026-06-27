@@ -264,9 +264,7 @@ pub fn asset_name_for(os: &str, arch: &str) -> Result<String> {
     match (os, arch) {
         ("linux", "x86_64") => Ok("anvil-linux-x86_64".to_string()),
         ("linux", "aarch64") => Ok("anvil-linux-aarch64".to_string()),
-        ("macos", "x86_64") => Ok("anvil-macos-x86_64".to_string()),
-        ("macos", "aarch64") => Ok("anvil-macos-aarch64".to_string()),
-        _ => bail!("Self-update is not supported on {os}/{arch} yet"),
+        _ => bail!("Self-update is only supported on Linux x86_64 / aarch64 ({os}/{arch})"),
     }
 }
 
@@ -294,10 +292,8 @@ mod tests {
             asset_name_for("linux", "aarch64").unwrap(),
             "anvil-linux-aarch64"
         );
-        assert_eq!(
-            asset_name_for("macos", "aarch64").unwrap(),
-            "anvil-macos-aarch64"
-        );
+        assert!(asset_name_for("macos", "aarch64").is_err());
+        assert!(asset_name_for("windows", "x86_64").is_err());
     }
 
     #[test]

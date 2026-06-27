@@ -27,12 +27,6 @@ jobs:
           - os: ubuntu-24.04-arm
             asset: anvil-linux-aarch64
             exe: ""
-          - os: macos-13
-            asset: anvil-macos-x86_64
-            exe: ""
-          - os: macos-14
-            asset: anvil-macos-aarch64
-            exe: ""
 
     steps:
       - uses: actions/checkout@v4
