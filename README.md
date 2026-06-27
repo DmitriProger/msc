@@ -58,7 +58,7 @@ anvil lobby start
 anvil
 ```
 
-Пример `start.sh` (флаги JVM пишешь сам — Anvil их не трогает):
+Пример `start.sh` (флаги JVM пишешь сам — Anvil файл не трогает):
 
 ```bash
 #!/bin/bash
@@ -67,6 +67,25 @@ java -Xms3G -Xmx3G -jar paper.jar --nogui
 ```
 
 > `-Xmx` должен быть **ниже** `memory_max` из `anvil.toml` (запас ~1G на оверхед JVM) — иначе сервер словит OOM-killer. Anvil предупредит при старте, если заметит превышение.
+
+### Плейсхолдеры `ANVIL_*` (опционально)
+
+Перед запуском Anvil кладёт в окружение переменные из `anvil.toml` — можешь на них ссылаться в `start.sh`, а можешь игнорировать (Anvil файл **не редактирует**):
+
+| Переменная | Значение |
+|---|---|
+| `ANVIL_XMX` | рекомендуемый heap = `memory_max` − ~1G запаса (напр. `3072M`) |
+| `ANVIL_MEMORY_MAX` | как в конфиге (`4G`) |
+| `ANVIL_CPU_CORES` | `cpu_cores` |
+| `ANVIL_DESCRIPTION` | `description` |
+| `ANVIL_SERVER_NAME`, `ANVIL_SERVER_DIR` | имя и путь сервера |
+
+Удобно связать heap с лимитом одним источником правды — поменял `memory_max`, и `-Xmx` едет автоматически:
+
+```bash
+#!/bin/bash
+java -Xms${ANVIL_XMX} -Xmx${ANVIL_XMX} -jar paper.jar --nogui
+```
 
 ---
 
@@ -193,10 +212,12 @@ anvil backup auth      # пройти device-flow в браузере
 anvil backup status    # проверить
 ```
 
-**Расписание:** поле `schedule` пока **не запускается автоматически** (планировщик не подключён). Используй системный cron:
+**Расписание:** включи `backup.enabled = true` и задай cron в `anvil.toml` — watchdog запускает бекапы автоматически (системный cron не нужен):
 
-```cron
-0 4 * * *  minecraft  /usr/local/bin/anvil lobby backup
+```toml
+[backup]
+enabled  = true
+schedule = "0 4 * * *"   # каждый день в 04:00
 ```
 
 ---

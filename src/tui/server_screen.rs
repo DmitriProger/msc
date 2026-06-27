@@ -222,22 +222,27 @@ fn draw(
         .map(|pid| pid.to_string())
         .unwrap_or_else(|| "-".to_string());
 
-    let identity = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(server_name.to_string(), strong_style()),
-            Span::raw("  "),
-            Span::styled(status_text(online, language), status_style(online)),
-        ]),
-        Line::from(vec![
-            Span::styled(language.choose("path    ", "путь    "), label_style()),
-            Span::styled(path, text_style()),
-        ]),
-        Line::from(vec![
-            Span::styled("session ", label_style()),
-            Span::styled(session, text_style()),
-        ]),
-    ]);
-    f.render_widget(identity, header_cols[0]);
+    let mut identity_lines = vec![Line::from(vec![
+        Span::styled(server_name.to_string(), strong_style()),
+        Span::raw("  "),
+        Span::styled(status_text(online, language), status_style(online)),
+    ])];
+    let description = server
+        .as_ref()
+        .map(|s| s.config.server.description.clone())
+        .unwrap_or_default();
+    if !description.is_empty() {
+        identity_lines.push(Line::from(Span::styled(description, dim_style())));
+    }
+    identity_lines.push(Line::from(vec![
+        Span::styled(language.choose("path    ", "путь    "), label_style()),
+        Span::styled(path, text_style()),
+    ]));
+    identity_lines.push(Line::from(vec![
+        Span::styled("session ", label_style()),
+        Span::styled(session, text_style()),
+    ]));
+    f.render_widget(Paragraph::new(identity_lines), header_cols[0]);
 
     let state = Paragraph::new(vec![
         Line::from(Span::styled(

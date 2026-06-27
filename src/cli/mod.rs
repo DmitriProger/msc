@@ -1,4 +1,3 @@
-use crate::backup::archive::{create_zip_archive, ArchiveConfig};
 use crate::backup::restore::extract_zip;
 use crate::config::{GlobalConfig, VERSION};
 use crate::error::AnvilError;
@@ -9,11 +8,9 @@ use crate::state::AppState;
 use crate::tmux::TmuxClient;
 use crate::update::{self, UpdateOptions, UpdateOutcome};
 use anyhow::Result;
-use chrono::Utc;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 // Terminal-native palette: neutral text with a restrained gunmetal-teal accent.
 const C_SUCCESS: Color = Color::Rgb {
@@ -561,179 +558,36 @@ pub fn cmd_console(name: &str, global_config: &GlobalConfig) -> Result<()> {
     Ok(())
 }
 
-fn backup_dir(server: &Server) -> PathBuf {
-    server.path.join("backups")
-}
-
-/// Create a backup archive of a server. Hot-backs-up online servers by flushing
-/// the world (`save-off` / `save-all`) unless `stop_server` is set, in which
-/// case the server is stopped, archived, and restarted.
+/// Create a backup archive of a server (delegates to the shared backup core).
 pub fn cmd_backup_create(name: &str, config: &GlobalConfig) -> Result<()> {
     let printer = Printer::new();
     let tmux = TmuxClient::new(&config.tmux_socket);
     let servers = discover_servers(config);
     let server = find_server(&servers, name)?;
-    let controller = ServerController::new(&tmux, config);
-    let bcfg = server.config.backup.clone().unwrap_or_default();
 
-    let dir = backup_dir(server);
-    std::fs::create_dir_all(&dir)?;
-    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    let out = dir.join(format!("{}-{}.zip", name, timestamp));
-    let session = format!("anvil_{}", name);
+    printer.info(&format!("Backing up {}...", name));
+    let path = crate::backup::create_backup(server, config, &tmux)
+        .map_err(|e| AnvilError::Backup(e.to_string()))?;
 
-    let was_online = controller.is_online(server);
-    let mut stopped = false;
-    if was_online {
-        if bcfg.stop_server {
-            printer.info(&format!("Stopping {} for a clean backup...", name));
-            let mut state = AppState::load(&config.state_path()).unwrap_or_default();
-            let _ = controller.stop(server, &mut state);
-            stopped = true;
-        } else {
-            printer.info("Flushing world to disk (save-off / save-all)...");
-            let _ = tmux.send_keys(&session, "save-off");
-            let _ = tmux.send_keys(&session, "save-all flush");
-            std::thread::sleep(Duration::from_secs(3));
-        }
-    }
-
-    // Never archive the backups directory into the backup itself.
-    let mut exclude = bcfg.exclude.clone();
-    exclude.push("backups".to_string());
-    exclude.push("backups/**".to_string());
-    let archive_cfg = ArchiveConfig {
-        include: bcfg.include.clone(),
-        exclude,
-    };
-
-    printer.info(&format!("Archiving {} -> {}", name, out.display()));
-    let result = create_zip_archive(&server.path, &out, &archive_cfg);
-
-    // Resume saving / restart regardless of how the archive went.
-    if was_online {
-        if stopped {
-            let mut state = AppState::load(&config.state_path()).unwrap_or_default();
-            if let Err(e) = controller.start(server, &mut state) {
-                printer.warn(&format!("Failed to restart {} after backup: {}", name, e));
-            }
-        } else {
-            let _ = tmux.send_keys(&session, "save-on");
-        }
-    }
-
-    result.map_err(|e| AnvilError::Backup(e.to_string()))?;
-
-    let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     printer.success(&format!(
         "Backup created: {} ({})",
-        out.display(),
+        path.display(),
         format_bytes(size)
     ));
-
-    rotate_backups(&dir, name, bcfg.keep_last, &printer);
-    maybe_upload_gdrive(config, &out, &printer);
-    Ok(())
-}
-
-/// Keep only the newest `keep_last` archives for a server, deleting older ones.
-fn rotate_backups(dir: &Path, name: &str, keep_last: u32, printer: &Printer) {
-    if keep_last == 0 {
-        return;
-    }
-    let mut archives: Vec<PathBuf> = match std::fs::read_dir(dir) {
-        Ok(entries) => entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with(&format!("{}-", name)) && n.ends_with(".zip"))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => return,
-    };
-    // Timestamped names sort chronologically; newest last.
-    archives.sort();
-    let keep = keep_last as usize;
-    if archives.len() <= keep {
-        return;
-    }
-    let remove_count = archives.len() - keep;
-    for old in archives.into_iter().take(remove_count) {
-        if std::fs::remove_file(&old).is_ok() {
-            printer.dim(&format!("Rotated out old backup: {}", old.display()));
-        }
-    }
-}
-
-/// Upload a backup to Google Drive when authorized; otherwise note local-only.
-fn maybe_upload_gdrive(config: &GlobalConfig, file: &Path, printer: &Printer) {
     if !Path::new(&config.backup.token_path).exists() {
         printer.dim("Stored locally. Run `anvil backup auth` to enable Google Drive uploads.");
-        return;
     }
-    let token_path = config.backup.token_path.clone();
-    let folder = config.backup.gdrive_folder.clone();
-    let file = file.to_path_buf();
-    let fname = file
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            printer.warn(&format!(
-                "Could not start uploader (kept local copy): {}",
-                e
-            ));
-            return;
-        }
-    };
-    let result = rt.block_on(async move {
-        let oauth =
-            crate::backup::oauth::OAuthClient::new(String::new(), String::new(), token_path);
-        let token = oauth.get_valid_token().await?;
-        let drive = crate::backup::gdrive::DriveClient::new(token);
-        let folder_id = drive.find_or_create_folder(&folder, None).await?;
-        drive
-            .upload_file_resumable(&file, &fname, &folder_id, |_, _| {})
-            .await?;
-        anyhow::Ok(())
-    });
-    match result {
-        Ok(_) => printer.success(&format!(
-            "Uploaded to Google Drive folder '{}'",
-            config.backup.gdrive_folder
-        )),
-        Err(e) => printer.warn(&format!(
-            "Google Drive upload failed (local copy kept): {}",
-            e
-        )),
-    }
+    Ok(())
 }
 
 pub fn cmd_backup_list(name: &str, config: &GlobalConfig) -> Result<()> {
     let printer = Printer::new();
     let servers = discover_servers(config);
     let server = find_server(&servers, name)?;
-    let dir = backup_dir(server);
+    let dir = crate::backup::backup_dir(server);
 
-    let mut archives: Vec<PathBuf> = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with(&format!("{}-", name)) && n.ends_with(".zip"))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    let mut archives = crate::backup::list_archives(&dir, name);
     if archives.is_empty() {
         printer.info(&format!(
             "No backups found for {} in {}",
@@ -769,7 +623,7 @@ pub fn cmd_backup_restore(name: &str, file: &str, config: &GlobalConfig) -> Resu
     let archive = if candidate.is_absolute() || candidate.exists() {
         candidate
     } else {
-        backup_dir(server).join(file)
+        crate::backup::backup_dir(server).join(file)
     };
     if !archive.exists() {
         printer.error(&format!("Backup file not found: {}", archive.display()));

@@ -39,9 +39,6 @@ pub struct BackupServerConfig {
     #[serde(default = "default_keep_last")]
     pub keep_last: u32,
 
-    #[serde(default = "default_archive_format")]
-    pub archive_format: String,
-
     #[serde(default = "default_true")]
     pub stop_server: bool,
 
@@ -85,9 +82,6 @@ fn default_schedule() -> String {
 fn default_keep_last() -> u32 {
     7
 }
-fn default_archive_format() -> String {
-    "zip".to_string()
-}
 
 impl Default for ServerLimits {
     fn default() -> Self {
@@ -116,7 +110,6 @@ impl Default for BackupServerConfig {
             enabled: false,
             schedule: default_schedule(),
             keep_last: default_keep_last(),
-            archive_format: default_archive_format(),
             stop_server: true,
             include: Vec::new(),
             exclude: Vec::new(),

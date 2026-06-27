@@ -1,7 +1,10 @@
+use crate::backup;
+use crate::backup::scheduler::next_cron_run;
 use crate::config::GlobalConfig;
-use crate::server::{control::ServerController, discover_servers};
+use crate::server::{control::ServerController, discover_servers, Server};
 use crate::state::{AppState, DesiredState};
 use crate::tmux::TmuxClient;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::time::{Duration, Instant};
@@ -55,6 +58,7 @@ pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
     for server in &servers {
         watch_states.insert(server.name.clone(), ServerWatchState::new());
     }
+    let mut next_backups: HashMap<String, DateTime<Utc>> = HashMap::new();
 
     loop {
         std::thread::sleep(MONITOR_INTERVAL);
@@ -62,6 +66,8 @@ pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
         let servers = discover_servers(&config);
         state = AppState::load(&state_path).unwrap_or_default();
         let controller = ServerController::new(&tmux, &config);
+
+        run_due_backups(&servers, &config, &tmux, &mut next_backups);
 
         for server in &servers {
             let desired = state.get_desired(&server.name);
@@ -131,6 +137,59 @@ pub fn run_watchdog(config: GlobalConfig) -> anyhow::Result<()> {
                 watch.start_time = Some(Instant::now());
                 state = state_copy;
             }
+        }
+    }
+}
+
+/// Run scheduled backups for servers whose cron `schedule` is due.
+///
+/// On first sight of a server the next run is computed and stored (no immediate
+/// backup on boot); thereafter a backup fires once the stored time passes, and
+/// the next time is recomputed. Servers without `backup.enabled` are skipped.
+fn run_due_backups(
+    servers: &[Server],
+    config: &GlobalConfig,
+    tmux: &TmuxClient,
+    next_backups: &mut HashMap<String, DateTime<Utc>>,
+) {
+    let now = Utc::now();
+    let enabled: std::collections::HashSet<&String> = servers
+        .iter()
+        .filter(|s| s.config.backup.as_ref().map(|b| b.enabled).unwrap_or(false))
+        .map(|s| &s.name)
+        .collect();
+    next_backups.retain(|name, _| enabled.contains(name));
+
+    for server in servers {
+        let Some(bcfg) = &server.config.backup else {
+            continue;
+        };
+        if !bcfg.enabled {
+            continue;
+        }
+        let Some(next) = next_cron_run(&bcfg.schedule, now) else {
+            tracing::warn!(server = %server.name, schedule = %bcfg.schedule, "Invalid backup cron schedule, skipping");
+            continue;
+        };
+
+        match next_backups.get(&server.name) {
+            None => {
+                // First sight: arm the timer, don't back up immediately.
+                next_backups.insert(server.name.clone(), next);
+            }
+            Some(&scheduled) if now >= scheduled => {
+                tracing::info!(server = %server.name, "Scheduled backup starting");
+                match backup::create_backup(server, config, tmux) {
+                    Ok(path) => {
+                        tracing::info!(server = %server.name, file = %path.display(), "Scheduled backup done")
+                    }
+                    Err(e) => {
+                        tracing::error!(server = %server.name, error = %e, "Scheduled backup failed")
+                    }
+                }
+                next_backups.insert(server.name.clone(), next);
+            }
+            Some(_) => {}
         }
     }
 }

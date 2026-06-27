@@ -9,7 +9,6 @@ pub const DEFAULT_STATE_PATH: &str = "/var/lib/anvil/state.json";
 #[allow(dead_code)]
 pub const DEFAULT_LOG_PATH: &str = "/var/log/anvil/anvil.log";
 pub const DEFAULT_GDRIVE_TOKEN_PATH: &str = "/var/lib/anvil/gdrive_token.json";
-pub const DEFAULT_TMP_DIR: &str = "/var/lib/anvil/tmp";
 pub const DEFAULT_WATCHDOG_LOCK: &str = "/var/lib/anvil/watchdog.lock";
 pub const DEFAULT_UPDATE_REPO: &str = "DmitriProger/msc";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -70,9 +69,6 @@ pub struct BackupConfig {
 
     #[serde(default = "default_token_path")]
     pub token_path: String,
-
-    #[serde(default = "default_tmp_dir")]
-    pub tmp_dir: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -95,9 +91,6 @@ fn default_gdrive_folder() -> String {
 }
 fn default_token_path() -> String {
     DEFAULT_GDRIVE_TOKEN_PATH.to_string()
-}
-fn default_tmp_dir() -> String {
-    DEFAULT_TMP_DIR.to_string()
 }
 fn default_update_repo() -> String {
     DEFAULT_UPDATE_REPO.to_string()

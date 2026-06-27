@@ -35,6 +35,49 @@ fn systemd_run_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Single-quote a value for safe interpolation into the shell launch line.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Recommended JVM heap (MiB) for a given `memory_max` ceiling: leave ~1 GiB of
+/// headroom for non-heap JVM memory, or 75% when the limit is small. Exposed via
+/// the `ANVIL_XMX` env var so a start.sh can stay in sync with the cgroup wall.
+fn recommended_xmx_mib(mem_max_bytes: u64) -> u64 {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let bytes = if mem_max_bytes > 3 * GIB / 2 {
+        mem_max_bytes - GIB
+    } else {
+        mem_max_bytes * 3 / 4
+    };
+    (bytes / (1024 * 1024)).max(64)
+}
+
+/// Build the `ANVIL_*` environment prefix exported into the launch. These are
+/// opt-in: a start.sh may reference `${ANVIL_XMX}` etc., or ignore them entirely.
+fn launch_env_prefix(server: &Server) -> String {
+    let limits = &server.config.limits;
+    let xmx = format!(
+        "{}M",
+        recommended_xmx_mib(parse_memory_str(&limits.memory_max))
+    );
+    let pairs = [
+        ("ANVIL_SERVER_NAME", server.name.clone()),
+        ("ANVIL_SERVER_DIR", server.path.display().to_string()),
+        ("ANVIL_MEMORY_MAX", limits.memory_max.clone()),
+        ("ANVIL_XMX", xmx),
+        ("ANVIL_CPU_CORES", limits.cpu_cores.to_string()),
+        (
+            "ANVIL_DESCRIPTION",
+            server.config.server.description.clone(),
+        ),
+    ];
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={} ", k, shell_quote(v)))
+        .collect()
+}
+
 /// Build the command (typed into the tmux pane) that launches the server.
 ///
 /// When `systemd-run` is available, the server runs inside a transient cgroup
@@ -42,8 +85,10 @@ fn systemd_run_available() -> bool {
 /// enforced by the kernel — independent of any `-Xmx` flags in start.sh.
 /// Otherwise it degrades gracefully to `taskset` (affinity only) or a plain
 /// launch, logging that limits are NOT enforced rather than failing to start.
+/// `ANVIL_*` env vars are exported in all cases for start.sh to opt into.
 fn build_launch_command(server: &Server) -> String {
     let limits = &server.config.limits;
+    let env = launch_env_prefix(server);
 
     // Validate affinity once; ignore (with a warning) if it isn't a clean CPU list.
     let affinity = limits.cpu_affinity.as_deref().filter(|a| valid_cpu_list(a));
@@ -65,8 +110,9 @@ fn build_launch_command(server: &Server) -> String {
             "--scope --user"
         };
         let mut cmd = format!(
-            "systemd-run {flags} --quiet --collect --unit=anvil-{name} \
+            "{env}systemd-run {flags} --quiet --collect --unit=anvil-{name} \
              -p MemoryMax={mem_max} -p MemoryHigh={mem_high} -p CPUQuota={quota}%",
+            env = env,
             flags = scope_flags,
             name = server.name,
             mem_max = mem_max,
@@ -84,8 +130,8 @@ fn build_launch_command(server: &Server) -> String {
             "systemd-run unavailable; resource limits (RAM/CPU) are NOT enforced"
         );
         match affinity {
-            Some(a) => format!("taskset -c {} ./start.sh", a),
-            None => "./start.sh".to_string(),
+            Some(a) => format!("{}taskset -c {} ./start.sh", env, a),
+            None => format!("{}./start.sh", env),
         }
     }
 }
@@ -312,5 +358,33 @@ mod tests {
         let dir = tempdir().unwrap();
         let server = server_with_script(dir.path(), "4G", "#!/bin/bash\n./run.sh\n");
         assert!(xmx_warning(&server).is_none());
+    }
+
+    #[test]
+    fn recommended_xmx_leaves_headroom() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(recommended_xmx_mib(4 * GIB), 3072); // 4G - 1G
+        assert_eq!(recommended_xmx_mib(8 * GIB), 7168); // 8G - 1G
+        assert_eq!(recommended_xmx_mib(GIB), 768); // small -> 75%
+        assert_eq!(recommended_xmx_mib(512 * 1024 * 1024), 384); // 512M -> 75%
+    }
+
+    #[test]
+    fn shell_quote_escapes_quotes_and_spaces() {
+        assert_eq!(shell_quote("Лобби сервер"), "'Лобби сервер'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote("4G"), "'4G'");
+    }
+
+    #[test]
+    fn launch_env_prefix_contains_anvil_vars() {
+        let dir = tempdir().unwrap();
+        let mut server = server_with_script(dir.path(), "4G", "#!/bin/bash\n");
+        server.config.server.description = "Lobby".to_string();
+        let env = launch_env_prefix(&server);
+        assert!(env.contains("ANVIL_XMX='3072M'"));
+        assert!(env.contains("ANVIL_MEMORY_MAX='4G'"));
+        assert!(env.contains("ANVIL_DESCRIPTION='Lobby'"));
+        assert!(env.contains("ANVIL_SERVER_NAME='test'"));
     }
 }
